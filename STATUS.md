@@ -1,6 +1,6 @@
 # KickAss — STATUS
 
-## Current phase: Phase 2 done — kicks audibly produced. Next: UI shell (Phase 3)
+## Current phase: Phase 3 done — full UI with attached knobs. Next: Visualizer (Phase 4)
 
 **Smoke test:**
 1. Run `build\KickAss_artefacts\Release\Standalone\KickAss.exe`
@@ -23,7 +23,7 @@
 | 2. Synthesis | ✅ done | `docs/ARCHITECTURE.md` + `docs/ROADMAP.md`, locked 2026-05-27 |
 | 3. JUCE skeleton | ✅ done | VST3 + Standalone build (Release), 25 APVTS params wired, 1000×680 placeholder window |
 | 4. DSP port | ✅ done | KickEngine implements full Python DSP + 4× oversampled tanh + DC blocker + soft-clip + transient layer |
-| 5. UI shell | ⏳ pending | LookAndFeel + header + 6 param panels + footer (no viz yet) |
+| 5. UI shell | ✅ done | KickAssLookAndFeel + 6 labeled panels + 25 attached widgets + PLAY button + footer |
 | 6. Visualizer | ⏳ pending | the headline feature — wave + envelopes + FFT + playhead |
 | 7. Preset system | ⏳ pending | 16 factory presets, .kickpreset + .json round-trip |
 | 8. Polish + DAW test | ⏳ pending | A/B, accessibility, Ableton/FL/Reaper/Bitwig validation |

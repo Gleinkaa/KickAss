@@ -57,6 +57,7 @@ target_sources(KickAss PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/KickEngine.cpp
+    Source/KickAssLookAndFeel.cpp
 )
 
 target_include_directories(KickAss PRIVATE Source)
