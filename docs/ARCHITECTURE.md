@@ -284,6 +284,32 @@ Factory bank (v1, **16 presets** total):
 
 ---
 
+## 8b. Portability: macOS + CLAP (locked 2026-05-27)
+
+**Targets:**
+- v1.0: Windows VST3 + Standalone (current)
+- v1.x: macOS VST3 + AU + Standalone (universal binary — x86_64 + arm64)
+- v1.x: CLAP on all OSes via [clap-juce-extensions](https://github.com/free-audio/clap-juce-extensions)
+
+**Portability rules — every Phase 3+ change must comply:**
+
+1. **No Windows-specific APIs.** No `<windows.h>`, no `_T()`, no `WinMain`. Use JUCE abstractions for everything: paths, fonts, file I/O, threads.
+2. **No hardcoded paths.** Preset folder is `juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("KickAss/Presets")` — resolves to `%APPDATA%\KickAss\Presets` on Win, `~/Library/Application Support/KickAss/Presets` on macOS.
+3. **Fonts: bundle binary, never assume system fonts.** Inter + JetBrains Mono via `BinaryData`. macOS doesn't ship Segoe UI; Windows doesn't ship SF Pro. Bundle both Inter + JetBrains Mono and use `juce::FontOptions` for everything. Phase 3 already does this.
+4. **No path separators in code.** Always use `juce::File::operator/` or `getChildFile`.
+5. **CLAP-friendly state.** CLAP states are read/written as a flat buffer, same as VST3. Our APVTS XML approach works directly — CLAP support is a CMake-target addition, not a code rewrite, **as long as the engine remains pure C++ DSP with no host-specific assumptions** (which it already is).
+6. **No format-specific UI tricks.** No VST3-only resize hints, no AU-only param flags. Keep the editor pure JUCE.
+7. **Build matrix planning:** the CMakeLists will gain `if(APPLE) FORMATS VST3 AU Standalone elseif(WIN32) FORMATS VST3 Standalone endif()` and a `KICKASS_BUILD_CLAP` option. The DSP / processor / editor code never changes.
+
+**What this means for current phases:**
+- Phase 3 (UI): bundle fonts as `BinaryData` (already planned). Use `juce::FontOptions` instead of deprecated constructors (Phase 1 warnings call these out — Phase 3 fixes them).
+- Phase 5 (presets): use the `getSpecialLocation` path above.
+- Phase 6 (polish): add the macOS build matrix to CI; document CLAP build via `clap-juce-extensions` submodule (do not commit code that breaks on missing submodule — keep CLAP behind a CMake option).
+
+CLAP via clap-juce-extensions is a 1-day add when we're ready: clone the repo as a submodule, call `clap_juce_extensions_glue_code()` in CMakeLists, no source changes required.
+
+---
+
 ## 9. Decisions locked by user (2026-05-27)
 
 | Q | Decision |
@@ -291,6 +317,9 @@ Factory bank (v1, **16 presets** total):
 | Gridmorph reference | **Dropped.** Not a real product. |
 | Window size | **1000 × 680 fixed for v1.** Resizable comes in v1.x. |
 | Polyphony | **Mono single voice for the kick body.** Click is its own transient layer (see §2 + §3). 2 ms retrigger crossfade on note-on inside tail. |
+| **macOS** | **Yes, planned.** VST3 + AU + Standalone, universal binary (x86_64 + arm64). v1.x. See §8b. |
+| **CLAP** | **Yes, planned.** Via `clap-juce-extensions`, no source changes required. v1.x. See §8b. |
+| Portability rules | Locked in §8b — applied to every Phase 3+ change. |
 | Click design | **Transient layer with `click_type` enum: Sine / Noise / Both**, HPF + tone + decay per layer. Sine = Python legacy chirp. Noise = filtered white-noise burst with exp decay. Both = sum of the two. |
 | Factory bank | 16 presets (6 Python + 10 from `research/04` §7). |
 | `pitch_track` default | 0 % (Python-faithful behavior — note number ignored unless user opts in). |

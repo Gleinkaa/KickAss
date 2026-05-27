@@ -147,7 +147,8 @@ Sorted roughly by impact. Promotes to a phase only after v1.0 ships and gets rea
 12. **Phase-align knob** — 0–20 ms delay to align kick fundamental zero-crossing with bass note (`research/04` §6).
 13. **Bezier envelope editing** — draggable breakpoints (`research/03` §0).
 14. **Modulation matrix / macro morph** between preset snapshots (`research/02` §10).
-15. **macOS build** with AU format.
+15. **macOS build** with AU + VST3 + Standalone, universal binary (x86_64 + arm64). See ARCHITECTURE §8b for portability rules already in force.
+16. **CLAP support** via [clap-juce-extensions](https://github.com/free-audio/clap-juce-extensions) submodule. ~1 day. No source changes — just CMake glue. See ARCHITECTURE §8b.
 
 ---
 

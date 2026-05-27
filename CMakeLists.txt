@@ -13,18 +13,44 @@ endif()
 
 add_subdirectory(${JUCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
 
+# Per-OS plugin format matrix (ARCHITECTURE §8b)
+#   Windows: VST3 + Standalone           (current)
+#   macOS:   VST3 + AU + Standalone       (v1.x)
+#   Linux:   VST3 + Standalone            (incidental)
+# CLAP is added later via clap-juce-extensions — keep behind a CMake option.
+if(APPLE)
+    set(KICKASS_FORMATS VST3 AU Standalone)
+elseif(WIN32)
+    set(KICKASS_FORMATS VST3 Standalone)
+else()
+    set(KICKASS_FORMATS VST3 Standalone)
+endif()
+
+# macOS universal binary for v1.x
+if(APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS arch" FORCE)
+endif()
+
+# Standalone-with-MIDI-keyboard helpers (so users see a clickable piano in the
+# Standalone target without having to configure Audio/MIDI Settings first)
+set(JUCE_STANDALONE_USE_OWN_MIDIINPUT TRUE)
+
 juce_add_plugin(KickAss
     COMPANY_NAME                "Gleinkaa"
+    BUNDLE_ID                   "com.gleinkaa.KickAss"          # macOS / iOS
     PLUGIN_MANUFACTURER_CODE    Glka
     PLUGIN_CODE                 Kick
     PRODUCT_NAME                "KickAss"
-    FORMATS                     VST3 Standalone
+    FORMATS                     ${KICKASS_FORMATS}
     IS_SYNTH                    TRUE
     NEEDS_MIDI_INPUT            TRUE
     NEEDS_MIDI_OUTPUT           FALSE
     IS_MIDI_EFFECT              FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-    COPY_PLUGIN_AFTER_BUILD     FALSE      # use scripts/deploy_vst3.bat (needs elevated shell)
+    COPY_PLUGIN_AFTER_BUILD     FALSE                            # use scripts/deploy_vst3.bat (Win) / built-in default install (macOS)
+    # macOS-only category hints
+    AU_MAIN_TYPE                kAudioUnitType_MusicDevice
+    VST3_CATEGORIES             Instrument Synth Drum
 )
 
 target_sources(KickAss PRIVATE
