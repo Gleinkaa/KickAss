@@ -1,16 +1,20 @@
 #pragma once
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_dsp/juce_dsp.h>
 #include <atomic>
+#include <memory>
 
 //==============================================================================
 // KickEngine — pure DSP class, owned by value inside KickAssProcessor.
 //
-// PHASE 1 STATUS: stub. renderBlock writes silence.
-// Phase 2 will port the Python DSP (pitch env → sine osc → AHDSR+scoop → transient
-// layer → 4x oversampled tanh → DC blocker → soft-clip → output gain).
+// Threading contract: prepare/setParams/triggerNote/renderBlock are called from
+// the audio thread. No allocations / no locks / no logging inside renderBlock.
+// renderOffline is called from the UI thread and is allowed to allocate.
 //
-// Threading contract: prepare/setParams/triggerNote/renderBlock/reset are all
-// called from the audio thread. No allocations / no locks / no logging.
+// Signal chain (per-sample, see ARCHITECTURE.md §2):
+//   pitch env → sine osc → AHDSR + scoop → + transient layer (sine/noise/both, HPF+LPF)
+//   → upsample 4x → tanh-with-drive-ramp → downsample 4x → polarity invert
+//   → DC blocker → soft-clip ceiling → output gain
 //==============================================================================
 
 struct KickParams
@@ -59,7 +63,7 @@ class KickEngine
 public:
     KickEngine() = default;
 
-    void prepare (double sampleRate, int /*samplesPerBlock*/);
+    void prepare (double sampleRate, int samplesPerBlock);
     void reset();
 
     void setParams (const KickParams& p) noexcept { params = p; }
@@ -67,25 +71,74 @@ public:
     /** Sample-accurate trigger. sampleOffset is the offset within the current block. */
     void triggerNote (int midiNote, float velocity, int sampleOffset) noexcept;
 
-    /** Add (do NOT replace) the kick into the given stereo buffer. */
+    /** Add the kick into the given stereo buffer at [startSample .. startSample+numSamples). */
     void renderBlock (juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept;
 
-    /** UI-thread offline render. Writes the entire kick into the buffer. */
+    /** UI-thread offline render. Writes the entire kick into the buffer at the given sample rate. */
     void renderOffline (juce::AudioBuffer<float>& buffer, double sampleRate, double durationMs);
+
+    /** Total latency from the oversampler — report via setLatencySamples(). */
+    int  getLatencySamples() const noexcept;
 
     bool isActive() const noexcept { return active.load(); }
     int  getPlaybackSamplePos() const noexcept { return playbackPos.load(); }
 
 private:
-    KickParams params {};
-    double currentSampleRate = 44100.0;
+    //--------------------------------------------------------------------------
+    // Per-sample DSP — shared between realtime and offline render paths.
+    // Returns a single mono sample (or 0 if voice inactive). Advances state.
+    // Note: drive + DC blocker + soft-clip + polarity + gain are applied at block level,
+    // because drive needs oversampling.
+    //--------------------------------------------------------------------------
+    float renderOneDrySample() noexcept;
 
-    // Voice state
+    /** Apply drive (oversampled), DC blocker, soft-clip, polarity, gain — all in place. */
+    void applyPostStages (float* samples, int n) noexcept;
+
+    // Voice activation: total kick duration in samples (from envelope params)
+    int computeTotalSamples() const noexcept;
+
+    //--------------------------------------------------------------------------
+    KickParams params {};
+    double sampleRate = 44100.0;
+    int    blockSize = 512;
+
+    // Voice state (mono single-voice)
     std::atomic<bool> active { false };
     std::atomic<int>  playbackPos { 0 };
 
-    // Pending trigger (read at the offset within the next renderBlock)
-    int   pendingTriggerOffset = -1;
-    int   pendingTriggerNote   = 60;
-    float pendingTriggerVel    = 1.0f;
+    double phase = 0.0;              // sine phase accumulator (double precision)
+    int    sampleSinceTrigger = 0;
+    int    totalSamples = 0;
+    float  velocity = 1.0f;
+    float  pitchTransposeRatio = 1.0f;
+
+    // Click state
+    int    clickSamplesLeft = 0;
+    int    clickTotalSamples = 0;
+    double clickPhase = 0.0;
+    // Click filter state (1-pole HP + 1-pole LP)
+    float  clickHpfPrevIn = 0.0f, clickHpfPrevOut = 0.0f;
+    float  clickLpfPrev   = 0.0f;
+
+    // DC blocker (1-pole HP @ ~8 Hz, always on)
+    float dcPrevIn = 0.0f, dcPrevOut = 0.0f;
+    float dcR = 0.999f;                  // computed in prepare()
+
+    // 2 ms retrigger crossfade — saves a snapshot of the prior voice's most recent samples
+    static constexpr int crossfadeMs = 2;
+    int    crossfadeLen = 0;
+    int    crossfadeRemaining = 0;
+    std::vector<float> crossfadeTail;
+
+    // Noise generator
+    juce::Random rng { 1337 };
+
+    // Oversampler (juce::dsp::Oversampling)
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
+    int oversamplerLatency = 0;
+
+    // Pre-allocated scratch buffers (renderBlock path)
+    std::vector<float> dryScratch;            // size = blockSize
+    juce::AudioBuffer<float> overSampledBuf;  // size = blockSize × OSfactor, mono
 };

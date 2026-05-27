@@ -230,6 +230,8 @@ void KickAssProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engine.prepare (sampleRate, samplesPerBlock);
     readParamsIntoEngine();
+    // Report oversampler latency to the host for PDC compensation.
+    setLatencySamples (engine.getLatencySamples());
 }
 
 void KickAssProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -256,7 +258,6 @@ void KickAssProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
                                 meta.samplePosition);
     }
 
-    // Phase 1: renderBlock is a no-op (silence). Phase 2 fills it in.
     engine.renderBlock (buffer, 0, buffer.getNumSamples());
 }
 
@@ -283,10 +284,10 @@ void KickAssProcessor::setStateInformation (const void* data, int sizeInBytes)
 //==============================================================================
 void KickAssProcessor::offlineRender (juce::AudioBuffer<float>& buffer, double durationMs)
 {
-    // Phase 4 fills this in (UI thread, blocks visualizer until done).
-    // Phase 1: just clear.
-    buffer.clear();
-    juce::ignoreUnused (durationMs);
+    // UI-thread render for the visualizer. Use the engine's offline path so realtime state
+    // isn't disturbed.
+    readParamsIntoEngine();
+    engine.renderOffline (buffer, getSampleRate() > 0.0 ? getSampleRate() : 48000.0, durationMs);
 }
 
 //==============================================================================
