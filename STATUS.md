@@ -1,17 +1,18 @@
 # KickAss — STATUS
 
-## Current phase: Research
+## Current phase: Architecture locked, ready for JUCE scaffold
 
 | Phase | Status | Output |
 |-------|--------|--------|
 | 0. Scaffold | ✅ done | folder tree, Python reference copied, git init |
-| 1. Research (4-agent brainstorm) | 🔄 in progress | `docs/research/*.md` |
-| 2. Synthesis | ⏳ pending | `docs/ARCHITECTURE.md`, `docs/ROADMAP.md` |
-| 3. JUCE scaffold | ⏳ pending | `CMakeLists.txt`, `Source/Plugin*.{h,cpp}`, `KickEngine.{h,cpp}` |
-| 4. DSP port | ⏳ pending | KickEngine implements the Python DSP in C++ |
-| 5. UI + visualizer | ⏳ pending | parameter UI + waveform/envelope canvas |
-| 6. Preset system | ⏳ pending | factory presets, JSON load/save (compatible with Python format) |
-| 7. Test in DAW | ⏳ pending | Ableton/FL/Reaper validation |
+| 1. Research (4-agent brainstorm) | ✅ done | `docs/research/01..04.md` |
+| 2. Synthesis | ✅ done | `docs/ARCHITECTURE.md` + `docs/ROADMAP.md`, locked 2026-05-27 |
+| 3. JUCE skeleton | ⏳ next | empty plugin loads in DAW with all 25 APVTS params |
+| 4. DSP port | ⏳ pending | KickEngine + parity test vs Python |
+| 5. UI shell | ⏳ pending | LookAndFeel + header + 6 param panels + footer (no viz yet) |
+| 6. Visualizer | ⏳ pending | the headline feature — wave + envelopes + FFT + playhead |
+| 7. Preset system | ⏳ pending | 16 factory presets, .kickpreset + .json round-trip |
+| 8. Polish + DAW test | ⏳ pending | A/B, accessibility, Ableton/FL/Reaper/Bitwig validation |
 
 ## Decisions locked
 
