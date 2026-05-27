@@ -48,6 +48,7 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     KickEngine engine;
+    KickEngine offlineEngine;   // dedicated for UI-thread visualizer renders (decoupled from RT state)
 
     // Cached atomic pointers — read once, avoid the lookup on the audio thread.
     void cacheParamPointers();

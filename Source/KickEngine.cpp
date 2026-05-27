@@ -382,30 +382,28 @@ void KickEngine::renderBlock (juce::AudioBuffer<float>& buffer,
 
 //==============================================================================
 // UI-thread offline render — used by the visualizer (Phase 4).
+// CALLER MUST own this engine (i.e. it's not the same engine the audio thread uses).
+// The processor's `offlineEngine` is the dedicated instance for this path.
 //==============================================================================
 void KickEngine::renderOffline (juce::AudioBuffer<float>& buffer,
                                 double sr, double durationMs)
 {
-    const double prevSr = sampleRate;
-    const int prevBlock = blockSize;
-
-    // Render at the requested SR, possibly different from the realtime SR.
-    if (! juce::approximatelyEqual (sr, sampleRate) || ! oversampler)
+    if (! oversampler || ! juce::approximatelyEqual (sr, sampleRate))
         prepare (sr, 4096);
+    else
+        reset();
 
     const int total = juce::jmax (1, (int) std::ceil ((durationMs * 0.001) * sr));
     buffer.setSize (1, total, false, true, true);
     buffer.clear();
 
-    // Fresh trigger from t=0
     triggerNote (60, 1.0f, 0);
 
-    const int chunk = 1024;
+    const int chunk = (int) dryScratch.size();
     int written = 0;
     while (written < total)
     {
         const int n = juce::jmin (chunk, total - written);
-        // Render into scratch
         for (int i = 0; i < n; ++i)
             dryScratch[(size_t) i] = renderOneDrySample();
         applyPostStages (dryScratch.data(), n);
@@ -414,10 +412,4 @@ void KickEngine::renderOffline (juce::AudioBuffer<float>& buffer,
         std::copy (dryScratch.begin(), dryScratch.begin() + n, dest);
         written += n;
     }
-
-    // Restore prior SR/blocksize for the realtime path.
-    if (! juce::approximatelyEqual (prevSr, sr))
-        prepare (prevSr, prevBlock);
-    else
-        reset();
 }

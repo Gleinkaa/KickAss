@@ -229,6 +229,8 @@ void KickAssProcessor::readParamsIntoEngine()
 void KickAssProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engine.prepare (sampleRate, samplesPerBlock);
+    // Offline engine runs at a fixed 48k for stable visualizer output across DAW SR changes.
+    offlineEngine.prepare (48000.0, 4096);
     readParamsIntoEngine();
     // Report oversampler latency to the host for PDC compensation.
     setLatencySamples (engine.getLatencySamples());
@@ -284,10 +286,37 @@ void KickAssProcessor::setStateInformation (const void* data, int sizeInBytes)
 //==============================================================================
 void KickAssProcessor::offlineRender (juce::AudioBuffer<float>& buffer, double durationMs)
 {
-    // UI-thread render for the visualizer. Use the engine's offline path so realtime state
-    // isn't disturbed.
-    readParamsIntoEngine();
-    engine.renderOffline (buffer, getSampleRate() > 0.0 ? getSampleRate() : 48000.0, durationMs);
+    // UI-thread render for the visualizer. Uses a DEDICATED offline engine so realtime
+    // state (phase, env, oversampler) is never touched by the UI.
+    KickParams p;
+    p.startFreq    = pStartFreq->load();
+    p.midFreq      = pMidFreq->load();
+    p.endFreq      = pEndFreq->load();
+    p.sweepTime1Ms = pSweepTime1->load();
+    p.sweepTime2Ms = pSweepTime2->load();
+    p.pitchCurve   = pPitchCurve->load();
+    p.volAttackMs  = pVolAttack->load();
+    p.volHoldMs    = pVolHold->load();
+    p.volDecay1Ms  = pVolDecay1->load();
+    p.volSustain   = pVolSustain->load() * 0.01f;
+    p.volDecay2Ms  = pVolDecay2->load();
+    p.volCurve     = pVolCurve->load();
+    p.scoopStartMs  = pScoopStart->load();
+    p.scoopLengthMs = pScoopLength->load();
+    p.scoopDepth    = pScoopDepth->load() * 0.01f;
+    p.clickVol     = pClickVol->load();
+    p.clickType    = (int) pClickType->load();
+    p.clickHpfHz   = pClickHpf->load();
+    p.clickToneHz  = pClickTone->load();
+    p.clickDecayMs = pClickDecay->load();
+    p.drive        = pDrive->load();
+    p.tailDrive    = pTailDrive->load();
+    p.invertPhase  = pInvertPhase->load() > 0.5f;
+    p.outputGainDb = pOutputGain->load();
+    p.pitchTrack   = 0.0f;   // visualizer always renders at note 60 (no transpose) for stable view
+
+    offlineEngine.setParams (p);
+    offlineEngine.renderOffline (buffer, 48000.0, durationMs);
 }
 
 //==============================================================================

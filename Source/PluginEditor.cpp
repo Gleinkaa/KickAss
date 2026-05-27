@@ -33,6 +33,8 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
     setSize (1000, 680);
 
     // Attach all panels
+    addAndMakeVisible (visualizer);
+
     addAndMakeVisible (pitchPanel);
     addAndMakeVisible (ampPanel);
     addAndMakeVisible (scoopPanel);
@@ -218,15 +220,7 @@ void KickAssEditor::paint (juce::Graphics& g)
     g.setColour (accentHot.withAlpha (0.15f));
     g.drawHorizontalLine (header.getBottom(), 0.0f, (float) getWidth());
 
-    // ---- Visualizer placeholder (Phase 4) ----
-    auto vizArea = bounds.removeFromTop (340).reduced (16, 8);
-    g.setColour (canvasBg);
-    g.fillRoundedRectangle (vizArea.toFloat(), 8.0f);
-    g.setColour (accentHot.withAlpha (0.20f));
-    g.drawRoundedRectangle (vizArea.toFloat(), 8.0f, 1.0f);
-    g.setColour (textDim);
-    g.setFont (KickFonts::uiItalic (13.0f));
-    g.drawText ("visualizer — Phase 4", vizArea, juce::Justification::centred);
+    // (visualizer paints itself — it's a child component)
 }
 
 //==============================================================================
@@ -261,7 +255,8 @@ void KickAssEditor::resized()
     auto bounds = getLocalBounds();
 
     bounds.removeFromTop (52);                          // header
-    bounds.removeFromTop (340);                         // viz placeholder
+    auto vizArea = bounds.removeFromTop (340).reduced (16, 8);
+    visualizer.setBounds (vizArea);
     auto paramsRow = bounds.removeFromTop (224);
     auto footerRow = bounds;                            // remaining (44 + padding)
 

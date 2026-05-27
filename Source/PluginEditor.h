@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
 #include "KickAssLookAndFeel.h"
+#include "WaveformDisplay.h"
 
 //==============================================================================
 // One UI widget per APVTS parameter, attachment-managed.
@@ -53,6 +54,9 @@ public:
 private:
     KickAssProcessor& processorRef;
     KickAssLookAndFeel lnf;
+
+    // Visualizer
+    WaveformDisplay visualizer { processorRef };
 
     // 6 panels, each a juce::Component child of the editor
     ParamPanel pitchPanel     { "PITCH" };
