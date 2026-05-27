@@ -4,6 +4,7 @@
 #include "PluginProcessor.h"
 #include "KickAssLookAndFeel.h"
 #include "WaveformDisplay.h"
+#include "PresetManager.h"
 
 //==============================================================================
 // One UI widget per APVTS parameter, attachment-managed.
@@ -42,7 +43,8 @@ private:
 };
 
 //==============================================================================
-class KickAssEditor : public juce::AudioProcessorEditor
+class KickAssEditor : public juce::AudioProcessorEditor,
+                       public juce::FileDragAndDropTarget
 {
 public:
     explicit KickAssEditor (KickAssProcessor&);
@@ -50,6 +52,11 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+
+    bool isInterestedInFileDrag (const juce::StringArray& files) override;
+    void filesDropped (const juce::StringArray& files, int x, int y) override;
+    void fileDragEnter (const juce::StringArray&, int, int) override;
+    void fileDragExit  (const juce::StringArray&) override;
 
 private:
     KickAssProcessor& processorRef;
@@ -82,10 +89,26 @@ private:
     ToggleControl invertPhase;
     KnobControl   outputGain, pitchTrack;
 
+    // Header bar
+    juce::ComboBox   presetCombo;
+    juce::ComboBox   noteSnapCombo;
+    juce::TextButton saveBtn  { "SAVE" };
+    juce::TextButton loadBtn  { "LOAD" };
+
     // Footer
     juce::TextButton playBtn    { "PLAY KICK" };
     juce::TextButton exportBtn  { "EXPORT WAV" };
     juce::TextButton abBtn      { "A/B" };
+
+    // Preset state
+    bool dropHighlight = false;
+    std::unique_ptr<juce::FileChooser> fileChooser;
+
+    void populatePresetCombo();
+    void handlePresetSelection();
+    void handleNoteSnapSelection();
+    void doSavePreset();
+    void doLoadPreset();
 
     // Helpers
     void setupKnob (KnobControl& kc, const juce::String& paramId, const juce::String& display);

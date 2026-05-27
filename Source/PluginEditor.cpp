@@ -112,6 +112,25 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
         masterPanel.addAndMakeVisible (k->label);
     }
 
+    // ---- Header bar widgets ----
+    addAndMakeVisible (presetCombo);
+    addAndMakeVisible (noteSnapCombo);
+    addAndMakeVisible (saveBtn);
+    addAndMakeVisible (loadBtn);
+
+    populatePresetCombo();
+    presetCombo.onChange = [this] { handlePresetSelection(); };
+
+    static const juce::StringArray noteNames {
+        "Off","C1","C#1","D1","D#1","E1","F1","F#1","G1","G#1","A1","A#1","B1","C2"
+    };
+    noteSnapCombo.addItemList (noteNames, 1);
+    noteSnapCombo.setSelectedId (1, juce::dontSendNotification);   // "Off"
+    noteSnapCombo.onChange = [this] { handleNoteSnapSelection(); };
+
+    saveBtn.onClick = [this] { doSavePreset(); };
+    loadBtn.onClick = [this] { doLoadPreset(); };
+
     // ---- Footer buttons ----
     addAndMakeVisible (playBtn);
     addAndMakeVisible (exportBtn);
@@ -121,6 +140,131 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
     abBtn.onClick     = [] { /* Phase 6 */ };
 
     resized();
+}
+
+//==============================================================================
+void KickAssEditor::populatePresetCombo()
+{
+    presetCombo.clear (juce::dontSendNotification);
+    int id = 1;
+    auto& pm = processorRef.getPresetManager();
+    presetCombo.addItem ("--- Factory ---", id++);
+    presetCombo.setItemEnabled (id - 1, false);
+    for (auto& n : pm.getFactoryNames())
+        presetCombo.addItem (n, id++);
+
+    auto userNames = pm.getUserPresetNames();
+    if (! userNames.isEmpty())
+    {
+        presetCombo.addItem ("--- User ---", id++);
+        presetCombo.setItemEnabled (id - 1, false);
+        for (auto& n : userNames)
+            presetCombo.addItem (n, id++);
+    }
+}
+
+void KickAssEditor::handlePresetSelection()
+{
+    const auto name = presetCombo.getText();
+    if (name.startsWith ("---")) return;
+    processorRef.getPresetManager().applyByName (name);
+}
+
+void KickAssEditor::handleNoteSnapSelection()
+{
+    const auto name = noteSnapCombo.getText();
+    if (name == "Off") return;
+
+    static const std::map<juce::String, float> noteHz = {
+        {"C1",  32.70f}, {"C#1", 34.65f}, {"D1",  36.71f}, {"D#1", 38.89f},
+        {"E1",  41.20f}, {"F1",  43.65f}, {"F#1", 46.25f}, {"G1",  49.00f},
+        {"G#1", 51.91f}, {"A1",  55.00f}, {"A#1", 58.27f}, {"B1",  61.74f},
+        {"C2",  65.41f}
+    };
+    auto it = noteHz.find (name);
+    if (it == noteHz.end()) return;
+
+    if (auto* rap = dynamic_cast<juce::RangedAudioParameter*> (processorRef.apvts.getParameter ("end_freq")))
+    {
+        const float norm = rap->getNormalisableRange().convertTo0to1 (it->second);
+        rap->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, norm));
+    }
+}
+
+void KickAssEditor::doSavePreset()
+{
+    auto dir = processorRef.getPresetManager().getUserPresetDir();
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Save KickAss preset", dir, "*.kickpreset;*.json");
+    fileChooser->launchAsync (
+        juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+        [this] (const juce::FileChooser& fc)
+        {
+            auto f = fc.getResult();
+            if (f.getFullPathName().isEmpty()) return;
+            auto& pm = processorRef.getPresetManager();
+            if (f.hasFileExtension (".json"))
+                pm.saveJson (f);
+            else
+            {
+                if (! f.hasFileExtension (".kickpreset"))
+                    f = f.withFileExtension (".kickpreset");
+                pm.saveKickPreset (f);
+            }
+            pm.rescanUserPresets();
+            populatePresetCombo();
+        });
+}
+
+void KickAssEditor::doLoadPreset()
+{
+    auto dir = processorRef.getPresetManager().getUserPresetDir();
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Load KickAss preset", dir, "*.kickpreset;*.json");
+    fileChooser->launchAsync (
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this] (const juce::FileChooser& fc)
+        {
+            auto f = fc.getResult();
+            if (! f.existsAsFile()) return;
+            processorRef.getPresetManager().loadFile (f);
+        });
+}
+
+//==============================================================================
+bool KickAssEditor::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (auto& s : files)
+        if (s.endsWithIgnoreCase (".json") || s.endsWithIgnoreCase (".kickpreset"))
+            return true;
+    return false;
+}
+
+void KickAssEditor::filesDropped (const juce::StringArray& files, int, int)
+{
+    dropHighlight = false;
+    repaint();
+    for (auto& s : files)
+    {
+        juce::File f (s);
+        if (f.hasFileExtension (".json") || f.hasFileExtension (".kickpreset"))
+        {
+            processorRef.getPresetManager().loadFile (f);
+            return;   // first match wins
+        }
+    }
+}
+
+void KickAssEditor::fileDragEnter (const juce::StringArray&, int, int)
+{
+    dropHighlight = true;
+    repaint();
+}
+
+void KickAssEditor::fileDragExit (const juce::StringArray&)
+{
+    dropHighlight = false;
+    repaint();
 }
 
 KickAssEditor::~KickAssEditor()
@@ -220,6 +364,13 @@ void KickAssEditor::paint (juce::Graphics& g)
     g.setColour (accentHot.withAlpha (0.15f));
     g.drawHorizontalLine (header.getBottom(), 0.0f, (float) getWidth());
 
+    // ---- Drop highlight border ----
+    if (dropHighlight)
+    {
+        g.setColour (accentHot);
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (2.0f), 6.0f, 2.0f);
+    }
+
     // (visualizer paints itself — it's a child component)
 }
 
@@ -254,7 +405,21 @@ void KickAssEditor::resized()
 {
     auto bounds = getLocalBounds();
 
-    bounds.removeFromTop (52);                          // header
+    auto header = bounds.removeFromTop (52);
+    // Header layout: wordmark on left (occupies ~ first 180 px), controls on right
+    {
+        auto hr = header.reduced (16, 12);
+        hr.removeFromLeft (180);   // wordmark gutter (painted in paint())
+        const int gap = 8;
+        loadBtn.setBounds        (hr.removeFromRight (60));
+        hr.removeFromRight (gap);
+        saveBtn.setBounds        (hr.removeFromRight (60));
+        hr.removeFromRight (gap);
+        noteSnapCombo.setBounds  (hr.removeFromRight (70));
+        hr.removeFromRight (gap);
+        presetCombo.setBounds    (hr.removeFromLeft  (juce::jmin (260, hr.getWidth() - 200)));
+    }
+
     auto vizArea = bounds.removeFromTop (340).reduced (16, 8);
     visualizer.setBounds (vizArea);
     auto paramsRow = bounds.removeFromTop (224);

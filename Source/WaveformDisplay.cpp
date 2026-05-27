@@ -129,18 +129,18 @@ void WaveformDisplay::recomputeEnvelopeTraces()
     const float endF    = *processor.apvts.getRawParameterValue ("end_freq");
     const float t1Ms    = *processor.apvts.getRawParameterValue ("sweep_time_1");
     const float t2Ms    = *processor.apvts.getRawParameterValue ("sweep_time_2");
-    const float pCurve  = juce::jmax (0.01f, *processor.apvts.getRawParameterValue ("pitch_curve"));
+    const float pCurve  = juce::jmax (0.01f, (float) *processor.apvts.getRawParameterValue ("pitch_curve"));
 
     const float ta  = *processor.apvts.getRawParameterValue ("vol_attack");
     const float th  = *processor.apvts.getRawParameterValue ("vol_hold");
     const float td1 = *processor.apvts.getRawParameterValue ("vol_decay_1");
-    const float sus = juce::jlimit (0.0f, 100.0f, *processor.apvts.getRawParameterValue ("vol_sustain")) * 0.01f;
+    const float sus = juce::jlimit (0.0f, 100.0f, (float) *processor.apvts.getRawParameterValue ("vol_sustain")) * 0.01f;
     const float td2 = *processor.apvts.getRawParameterValue ("vol_decay_2");
-    const float vC  = juce::jmax (0.01f, *processor.apvts.getRawParameterValue ("vol_curve"));
+    const float vC  = juce::jmax (0.01f, (float) *processor.apvts.getRawParameterValue ("vol_curve"));
 
     const float scStart  = *processor.apvts.getRawParameterValue ("scoop_start");
     const float scLength = *processor.apvts.getRawParameterValue ("scoop_length");
-    const float scDepth  = juce::jlimit (0.0f, 100.0f, *processor.apvts.getRawParameterValue ("scoop_depth")) * 0.01f;
+    const float scDepth  = juce::jlimit (0.0f, 100.0f, (float) *processor.apvts.getRawParameterValue ("scoop_depth")) * 0.01f;
 
     const int  width = juce::jmax (1, getWidth() - (int) (kLeftAxisPx + 4.0f));
     ampEnvTrace.assign ((size_t) width, 0.0f);

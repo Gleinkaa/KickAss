@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "PresetManager.h"
 
 //==============================================================================
 // Parameter value-to-text formatters (per ARCHITECTURE.md §5 and research/03 §6.2)
@@ -163,7 +164,10 @@ KickAssProcessor::KickAssProcessor()
       apvts (*this, nullptr, "Parameters", createParameterLayout())
 {
     cacheParamPointers();
+    presetManager = std::make_unique<PresetManager> (*this);
 }
+
+KickAssProcessor::~KickAssProcessor() = default;
 
 void KickAssProcessor::cacheParamPointers()
 {

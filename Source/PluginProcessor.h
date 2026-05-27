@@ -2,12 +2,14 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "KickEngine.h"
 
+class PresetManager;  // fwd
+
 //==============================================================================
 class KickAssProcessor : public juce::AudioProcessor
 {
 public:
     KickAssProcessor();
-    ~KickAssProcessor() override = default;
+    ~KickAssProcessor() override;
 
     //==============================================================================
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -42,6 +44,7 @@ public:
     int getPlaybackSamplePos() const noexcept { return engine.getPlaybackSamplePos(); }
 
     KickEngine& getEngine() noexcept { return engine; }
+    PresetManager& getPresetManager() noexcept { return *presetManager; }
 
 private:
     //==============================================================================
@@ -49,6 +52,7 @@ private:
 
     KickEngine engine;
     KickEngine offlineEngine;   // dedicated for UI-thread visualizer renders (decoupled from RT state)
+    std::unique_ptr<PresetManager> presetManager;
 
     // Cached atomic pointers — read once, avoid the lookup on the audio thread.
     void cacheParamPointers();

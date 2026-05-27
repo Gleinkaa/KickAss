@@ -59,6 +59,7 @@ target_sources(KickAss PRIVATE
     Source/KickEngine.cpp
     Source/KickAssLookAndFeel.cpp
     Source/WaveformDisplay.cpp
+    Source/PresetManager.cpp
 )
 
 target_include_directories(KickAss PRIVATE Source)

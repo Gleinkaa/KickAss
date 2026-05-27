@@ -1,6 +1,8 @@
 # KickAss — STATUS
 
-## Current phase: Phase 4 done — visualizer live. Next: Preset system (Phase 5)
+## Current phase: Phase 5 done — preset system + handoff written. Next: Phase 6 polish + DAW validation
+
+**Comprehensive smoke-test checklist in [docs/HANDOFF.md](docs/HANDOFF.md). Next session starts there.**
 
 **Smoke test:**
 1. Run `build\KickAss_artefacts\Release\Standalone\KickAss.exe`
@@ -25,8 +27,8 @@
 | 4. DSP port | ✅ done | KickEngine implements full Python DSP + 4× oversampled tanh + DC blocker + soft-clip + transient layer |
 | 5. UI shell | ✅ done | KickAssLookAndFeel + 6 labeled panels + 25 attached widgets + PLAY button + footer |
 | 6. Visualizer | ✅ done | WaveformDisplay: pitch env (cyan log-Y) + amp env (yellow) + scoop wash + red waveform + white playhead + readouts. Click-to-play. |
-| 7. Preset system | ⏳ pending | 16 factory presets, .kickpreset + .json round-trip |
-| 8. Polish + DAW test | ⏳ pending | A/B, accessibility, Ableton/FL/Reaper/Bitwig validation |
+| 7. Preset system | ✅ done | 16 factory presets baked in, .kickpreset + Python-compatible .json round-trip, drag-drop, note-snap |
+| 8. Polish + DAW test | ⏳ next | A/B, Auto Play, EXPORT WAV, multi-DAW validation. See `docs/HANDOFF.md` |
 
 ## Decisions locked
 
