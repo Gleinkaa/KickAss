@@ -1,0 +1,44 @@
+# Build outputs
+build/
+dist/
+out/
+*.vst3
+*.dll
+*.exp
+*.lib
+*.pdb
+*.ilk
+
+# JUCE generated
+JuceLibraryCode/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+CMakeSettings.json
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.sln
+*.vcxproj*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Audio scratch
+*.wav.tmp
+reference/*.wav
+
+# Python venv (if scripts/ adds any)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local notes
+NOTES_local.md
+*.local.md
