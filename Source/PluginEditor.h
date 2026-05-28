@@ -44,7 +44,9 @@ private:
 
 //==============================================================================
 class KickAssEditor : public juce::AudioProcessorEditor,
-                       public juce::FileDragAndDropTarget
+                       public juce::FileDragAndDropTarget,
+                       public juce::AudioProcessorValueTreeState::Listener,
+                       public juce::Timer
 {
 public:
     explicit KickAssEditor (KickAssProcessor&);
@@ -52,6 +54,9 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+
+    // APVTS::Listener — mirror envelope_mode into AMP knob enable-state
+    void parameterChanged (const juce::String& paramID, float newValue) override;
 
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void filesDropped (const juce::StringArray& files, int x, int y) override;
@@ -85,30 +90,53 @@ private:
     ChoiceControl clickType;
     // DRIVE (2)
     KnobControl drive, tailDrive;
-    // MASTER (3)
+    // MASTER (4)
     ToggleControl invertPhase;
-    KnobControl   outputGain, pitchTrack;
+    KnobControl   outputGain, pitchTrack, phaseOffset;
 
     // Header bar
     juce::ComboBox   presetCombo;
     juce::ComboBox   noteSnapCombo;
     juce::TextButton saveBtn  { "SAVE" };
     juce::TextButton loadBtn  { "LOAD" };
+    juce::Label      modifiedDot { {}, "*" };   // shows when current state diverges from last-loaded preset
+
+    // Modified-since-load tracking
+    bool isPresetModified           = false;
+    bool suppressModificationDetect = false;
+
+    // AMP panel header — Phase 6b envelope mode segmented control
+    juce::TextButton modeSimpleBtn   { "Simple" };
+    juce::TextButton modeAdvancedBtn { "Advanced" };
 
     // Footer
     juce::TextButton playBtn    { "PLAY KICK" };
+    juce::Slider     bpmSlider;                      // 60–200, default 145, LinearBar
+    juce::TextButton autoPlayBtn { "AUTO" };
     juce::TextButton exportBtn  { "EXPORT WAV" };
     juce::TextButton abBtn      { "A/B" };
+
+    bool autoPlayIsOn = false;
 
     // Preset state
     bool dropHighlight = false;
     std::unique_ptr<juce::FileChooser> fileChooser;
+
+    // A/B compare — two snapshot slots of apvts.state (+ curve subtree). Short-click
+    // toggles between A and B; modifier-click (shift / right-click) copies current
+    // state into the OTHER slot. The button face shows the currently-active slot.
+    juce::ValueTree abSlotA;
+    juce::ValueTree abSlotB;
+    bool             abSlotIsB = false;   // false → A active, true → B active
 
     void populatePresetCombo();
     void handlePresetSelection();
     void handleNoteSnapSelection();
     void doSavePreset();
     void doLoadPreset();
+    void doExportWav();
+    void doToggleAB();
+    void doCopyAB();
 
     // Helpers
     void setupKnob (KnobControl& kc, const juce::String& paramId, const juce::String& display);
@@ -120,6 +148,15 @@ private:
     void layoutPanelHeader (ParamPanel& panel);
 
     void triggerPreviewNote();
+    void timerCallback() override;   // juce::Timer — Auto Play 4/4 retrigger
+
+    // Phase 6b — envelope mode UI sync
+    void setEnvelopeMode (bool advanced);          // writes to APVTS via parameter
+    void syncEnvelopeModeUI();                     // reads APVTS, updates buttons + knob enable
+
+    // Phase 8 — modified-preset indicator
+    void clearPresetModifiedFlag();                // call after preset apply / save
+    void markPresetModified();                     // any APVTS change while not suppressed
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KickAssEditor)
 };

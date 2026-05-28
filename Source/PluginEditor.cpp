@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include <juce_audio_formats/juce_audio_formats.h>
 
 //==============================================================================
 // ParamPanel — labeled section background. Children are positioned by KickAssEditor.
@@ -30,7 +31,9 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p)
 {
     setLookAndFeel (&lnf);
-    setSize (1000, 680);
+    setResizable (true, true);
+    setResizeLimits (1100, 720, 1920, 1200);
+    setSize (1280, 820);
 
     // Attach all panels
     addAndMakeVisible (visualizer);
@@ -67,6 +70,35 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
         ampPanel.addAndMakeVisible (k->slider);
         ampPanel.addAndMakeVisible (k->label);
     }
+
+    // Mode segmented control inside AMP panel header (Phase 6b)
+    for (auto* b : { &modeSimpleBtn, &modeAdvancedBtn })
+    {
+        b->setClickingTogglesState (true);
+        b->setRadioGroupId (0x6b6d6f64);                 // 'kmod'
+        b->setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
+        ampPanel.addAndMakeVisible (*b);
+    }
+    modeSimpleBtn  .onClick = [this] { if (modeSimpleBtn  .getToggleState()) setEnvelopeMode (false); };
+    modeAdvancedBtn.onClick = [this] { if (modeAdvancedBtn.getToggleState()) setEnvelopeMode (true);  };
+
+    // Listen to envelope_mode so any external change (preset load, host automation, DAW UI)
+    // keeps the buttons + AMP-knob enable-state in sync.
+    processorRef.apvts.addParameterListener ("envelope_mode", this);
+    syncEnvelopeModeUI();
+
+    // Phase 8 — modified-preset indicator: listen to every APVTS param so any
+    // user/host change flips the "*" on, then clear it after a preset load/save.
+    for (auto* prm : processorRef.getParameters())
+        if (auto* rap = dynamic_cast<juce::RangedAudioParameter*> (prm))
+            if (rap->paramID != "envelope_mode")        // already registered above
+                processorRef.apvts.addParameterListener (rap->paramID, this);
+
+    modifiedDot.setColour (juce::Label::textColourId, KickColors::accentHot);
+    modifiedDot.setFont (KickFonts::ui (16.0f, true));
+    modifiedDot.setJustificationType (juce::Justification::centred);
+    modifiedDot.setVisible (false);
+    addAndMakeVisible (modifiedDot);
 
     // ---- SCOOP ----
     setupKnob (scoopStart,  "scoop_start",  "Start");
@@ -105,8 +137,9 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
     setupToggle (invertPhase, "invert_phase", "Invert Phase");
     setupKnob (outputGain,  "output_gain",  "Output");
     setupKnob (pitchTrack,  "pitch_track",  "Pitch Track");
+    setupKnob (phaseOffset, "phase_offset", "Phase °");
     masterPanel.addAndMakeVisible (invertPhase.button);
-    for (auto* k : { &outputGain, &pitchTrack })
+    for (auto* k : { &outputGain, &pitchTrack, &phaseOffset })
     {
         masterPanel.addAndMakeVisible (k->slider);
         masterPanel.addAndMakeVisible (k->label);
@@ -136,8 +169,51 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
     addAndMakeVisible (exportBtn);
     addAndMakeVisible (abBtn);
     playBtn.onClick   = [this] { triggerPreviewNote(); };
-    exportBtn.onClick = [] { /* Phase 6 */ };
-    abBtn.onClick     = [] { /* Phase 6 */ };
+    exportBtn.onClick = [this] { doExportWav(); };
+    abBtn.setButtonText ("A");
+    abBtn.onClick = [this]
+    {
+        // Plain click toggles between slots. Shift-held click copies current
+        // state into the inactive slot ("commit" / "checkpoint" semantics).
+        if (juce::ModifierKeys::currentModifiers.isShiftDown())
+            doCopyAB();
+        else
+            doToggleAB();
+    };
+
+    // ---- Auto Play 4/4 ----
+    bpmSlider.setSliderStyle (juce::Slider::LinearBar);
+    bpmSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    bpmSlider.setRange (60.0, 200.0, 1.0);
+    bpmSlider.setValue (145.0, juce::dontSendNotification);
+    bpmSlider.setTextValueSuffix (" BPM");
+    bpmSlider.setLookAndFeel (&lnf);
+    bpmSlider.onValueChange = [this]
+    {
+        // If the timer is running, restart it with the new interval so the
+        // beat grid realigns immediately to the new tempo.
+        if (autoPlayIsOn)
+            startTimer (juce::jlimit (100, 2000,
+                        juce::roundToInt (60000.0 / bpmSlider.getValue())));
+    };
+    addAndMakeVisible (bpmSlider);
+
+    autoPlayBtn.setClickingTogglesState (true);
+    autoPlayBtn.onClick = [this]
+    {
+        autoPlayIsOn = autoPlayBtn.getToggleState();
+        if (autoPlayIsOn)
+        {
+            triggerPreviewNote();   // fire immediately on first beat
+            startTimer (juce::jlimit (100, 2000,
+                        juce::roundToInt (60000.0 / bpmSlider.getValue())));
+        }
+        else
+        {
+            stopTimer();
+        }
+    };
+    addAndMakeVisible (autoPlayBtn);
 
     resized();
 }
@@ -167,7 +243,21 @@ void KickAssEditor::handlePresetSelection()
 {
     const auto name = presetCombo.getText();
     if (name.startsWith ("---")) return;
+
+    // Suppress modification detection during the burst of listener callbacks
+    // that applyByName triggers (setValueNotifyingHost per param), then snapshot
+    // the result as the new "loaded" baseline.
+    suppressModificationDetect = true;
     processorRef.getPresetManager().applyByName (name);
+    suppressModificationDetect = false;
+    // The bounced-to-message-thread parameterChanged callbacks fire AFTER this
+    // function returns; they read suppressModificationDetect which is false by
+    // then. So defer the clear to the back of the message queue too.
+    juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<KickAssEditor> (this)]
+    {
+        if (auto* self = safeThis.getComponent())
+            self->clearPresetModifiedFlag();
+    });
 }
 
 void KickAssEditor::handleNoteSnapSelection()
@@ -213,7 +303,111 @@ void KickAssEditor::doSavePreset()
             }
             pm.rescanUserPresets();
             populatePresetCombo();
+            clearPresetModifiedFlag();   // saving makes "the current file" = current state
         });
+}
+
+//==============================================================================
+// Phase 8 — EXPORT WAV
+//==============================================================================
+void KickAssEditor::doExportWav()
+{
+    // Pick a sensible default duration from the current envelope. In Advanced
+    // mode that's the curve's total time; in Simple it's the AHDSR sum. Add
+    // 50 ms tail so the final decay isn't clipped.
+    double durationMs;
+    if (processorRef.isEnvelopeAdvanced())
+    {
+        juce::SpinLock::ScopedLockType l (processorRef.getVolCurveLock());
+        durationMs = juce::jmax (200.0f, processorRef.getVolEnvCurve().getTotalMs() + 50.0f);
+    }
+    else
+    {
+        const float ta  = *processorRef.apvts.getRawParameterValue ("vol_attack");
+        const float th  = *processorRef.apvts.getRawParameterValue ("vol_hold");
+        const float td1 = *processorRef.apvts.getRawParameterValue ("vol_decay_1");
+        const float td2 = *processorRef.apvts.getRawParameterValue ("vol_decay_2");
+        durationMs = juce::jmax (200.0, (double) (ta + th + td1 + td2) + 50.0);
+    }
+
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Export kick as WAV",
+        juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+            .getChildFile ("kick.wav"),
+        "*.wav");
+
+    fileChooser->launchAsync (
+        juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+        [this, durationMs] (const juce::FileChooser& fc)
+        {
+            auto f = fc.getResult();
+            if (f.getFullPathName().isEmpty()) return;
+            if (! f.hasFileExtension (".wav"))
+                f = f.withFileExtension (".wav");
+
+            // 1. Render mono buffer at 48 kHz (offlineRender's fixed rate).
+            constexpr double sr = 48000.0;
+            juce::AudioBuffer<float> mono;
+            processorRef.offlineRender (mono, durationMs);
+
+            // 2. Promote to stereo for broad DAW compatibility.
+            juce::AudioBuffer<float> stereo (2, mono.getNumSamples());
+            stereo.copyFrom (0, 0, mono, 0, 0, mono.getNumSamples());
+            stereo.copyFrom (1, 0, mono, 0, 0, mono.getNumSamples());
+
+            // 3. Write 24-bit PCM WAV (DAW-friendly headroom).
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::OutputStream> out (f.createOutputStream());
+            if (out)
+            {
+                out->setPosition (0);
+                if (auto* fos = dynamic_cast<juce::FileOutputStream*> (out.get()))
+                    fos->truncate();
+                const auto opts = juce::AudioFormatWriterOptions()
+                                      .withSampleRate (sr)
+                                      .withNumChannels (2)
+                                      .withBitsPerSample (24);
+                // JUCE 8 createWriterFor takes the unique_ptr by ref and moves out of it on success.
+                if (auto writer = wav.createWriterFor (out, opts))
+                    writer->writeFromAudioSampleBuffer (stereo, 0, stereo.getNumSamples());
+            }
+        });
+}
+
+//==============================================================================
+// Phase 8 — A/B compare
+//==============================================================================
+void KickAssEditor::doToggleAB()
+{
+    // Capture current into the active slot, then load the other slot (if it
+    // has been initialized). First-time toggle initializes both to current.
+    auto current = processorRef.apvts.copyState();
+
+    auto& currentSlot = abSlotIsB ? abSlotB : abSlotA;
+    auto& otherSlot   = abSlotIsB ? abSlotA : abSlotB;
+
+    currentSlot = current;                  // remember where we were
+    if (! otherSlot.isValid())
+        otherSlot = current.createCopy();   // first flip: B starts equal to A
+
+    // A/B is a deliberate state swap, not a parameter edit — don't let the burst
+    // of listener callbacks falsely flip the modified-preset asterisk on.
+    suppressModificationDetect = true;
+    processorRef.apvts.replaceState (otherSlot.createCopy());
+    processorRef.restoreVolCurveFromStateOrAhdsr();
+    suppressModificationDetect = false;
+
+    abSlotIsB = ! abSlotIsB;
+    abBtn.setButtonText (abSlotIsB ? "B" : "A");
+}
+
+void KickAssEditor::doCopyAB()
+{
+    // Shift-click: copy current state into the INACTIVE slot. Useful for
+    // "commit this as my B reference" without flipping away from it.
+    auto current = processorRef.apvts.copyState();
+    auto& otherSlot = abSlotIsB ? abSlotA : abSlotB;
+    otherSlot = current;
 }
 
 void KickAssEditor::doLoadPreset()
@@ -227,7 +421,15 @@ void KickAssEditor::doLoadPreset()
         {
             auto f = fc.getResult();
             if (! f.existsAsFile()) return;
+            suppressModificationDetect = true;
             processorRef.getPresetManager().loadFile (f);
+            suppressModificationDetect = false;
+            juce::Component::SafePointer<KickAssEditor> safeThis (this);
+            juce::MessageManager::callAsync ([safeThis]
+            {
+                if (auto* self = safeThis.getComponent())
+                    self->clearPresetModifiedFlag();
+            });
         });
 }
 
@@ -249,7 +451,15 @@ void KickAssEditor::filesDropped (const juce::StringArray& files, int, int)
         juce::File f (s);
         if (f.hasFileExtension (".json") || f.hasFileExtension (".kickpreset"))
         {
+            suppressModificationDetect = true;
             processorRef.getPresetManager().loadFile (f);
+            suppressModificationDetect = false;
+            juce::Component::SafePointer<KickAssEditor> safeThis (this);
+            juce::MessageManager::callAsync ([safeThis]
+            {
+                if (auto* self = safeThis.getComponent())
+                    self->clearPresetModifiedFlag();
+            });
             return;   // first match wins
         }
     }
@@ -269,7 +479,77 @@ void KickAssEditor::fileDragExit (const juce::StringArray&)
 
 KickAssEditor::~KickAssEditor()
 {
+    stopTimer();   // stop Auto Play before any member destruction
+    for (auto* prm : processorRef.getParameters())
+        if (auto* rap = dynamic_cast<juce::RangedAudioParameter*> (prm))
+            processorRef.apvts.removeParameterListener (rap->paramID, this);
     setLookAndFeel (nullptr);
+}
+
+//==============================================================================
+// Phase 6b — envelope mode plumbing
+//==============================================================================
+void KickAssEditor::parameterChanged (const juce::String& paramID, float /*newValue*/)
+{
+    // APVTS listener may fire on the audio thread — bounce to message thread for UI work.
+    juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<KickAssEditor> (this), paramID]
+    {
+        auto* self = safeThis.getComponent();
+        if (! self) return;
+        if (paramID == "envelope_mode")
+            self->syncEnvelopeModeUI();
+        if (! self->suppressModificationDetect)
+            self->markPresetModified();
+    });
+}
+
+void KickAssEditor::markPresetModified()
+{
+    if (isPresetModified) return;
+    isPresetModified = true;
+    modifiedDot.setVisible (true);
+}
+
+void KickAssEditor::clearPresetModifiedFlag()
+{
+    isPresetModified = false;
+    modifiedDot.setVisible (false);
+}
+
+void KickAssEditor::setEnvelopeMode (bool advanced)
+{
+    // Refresh the breakpoint curve from current AHDSR knob values BEFORE flipping
+    // the mode, so the moment DSP swaps to LUT mode it reads a freshly-baked
+    // shape matching what was just heard in Simple mode. No-op if the user has
+    // already customized the curve (mode == "custom").
+    if (advanced)
+        processorRef.onEnterAdvancedMode();
+
+    if (auto* p = processorRef.apvts.getParameter ("envelope_mode"))
+    {
+        // envelope_mode is an AudioParameterChoice with 2 items → norm 0.0/1.0
+        const float norm = advanced ? 1.0f : 0.0f;
+        if (! juce::approximatelyEqual (p->getValue(), norm))
+            p->setValueNotifyingHost (norm);
+    }
+}
+
+void KickAssEditor::syncEnvelopeModeUI()
+{
+    const bool advanced = processorRef.isEnvelopeAdvanced();
+
+    modeSimpleBtn  .setToggleState (! advanced, juce::dontSendNotification);
+    modeAdvancedBtn.setToggleState (  advanced, juce::dontSendNotification);
+
+    // Grey AHDSR knobs in Advanced mode — the breakpoint editor owns the shape now.
+    const float dimAlpha = 0.40f;
+    for (auto* k : { &volAttack, &volHold, &volDecay1, &volSustain, &volDecay2, &volCurve })
+    {
+        k->slider.setEnabled              (! advanced);
+        k->slider.setInterceptsMouseClicks (! advanced, ! advanced);
+        k->slider.setAlpha                (advanced ? dimAlpha : 1.0f);
+        k->label.setAlpha                 (advanced ? dimAlpha : 1.0f);
+    }
 }
 
 //==============================================================================
@@ -279,6 +559,7 @@ void KickAssEditor::setupKnob (KnobControl& kc, const juce::String& paramId, con
     kc.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 64, 14);
     kc.slider.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     kc.slider.setLookAndFeel (&lnf);
+    kc.slider.setPopupMenuEnabled (true);   // right-click → Reset / Edit value / Copy / Paste
 
     kc.label.setText (display, juce::dontSendNotification);
     kc.label.setJustificationType (juce::Justification::centredTop);
@@ -320,6 +601,14 @@ void KickAssEditor::triggerPreviewNote()
     processorRef.getEngine().triggerNote (60, 1.0f, 0);
 }
 
+void KickAssEditor::timerCallback()
+{
+    // Auto Play 4/4 — fires every (60000 / bpm) ms on the message thread.
+    // juce::Timer callbacks are always on the message thread, so the engine call
+    // is safe (triggerNote is an atomic flag set).
+    triggerPreviewNote();
+}
+
 //==============================================================================
 void KickAssEditor::paint (juce::Graphics& g)
 {
@@ -353,11 +642,11 @@ void KickAssEditor::paint (juce::Graphics& g)
         g.drawText ("ASS", hb.getX() + (int) std::ceil (kickW) + 2, hb.getY() + 4,
                     120, hb.getHeight() - 8, juce::Justification::centredLeft);
 
-        g.setColour (textGhost);
-        g.setFont (KickFonts::uiItalic (10.0f));
+        g.setColour (textDim);
+        g.setFont (KickFonts::uiItalic (14.0f));
         g.drawText ("by Gleinkaa",
-                    hb.getX(), hb.getBottom() - 14,
-                    200, 12, juce::Justification::centredLeft);
+                    hb.getX() + (int) std::ceil (kickW) + 100, hb.getY() + 4,
+                    160, hb.getHeight() - 8, juce::Justification::centredLeft);
     }
 
     // Header divider hairline
@@ -409,7 +698,7 @@ void KickAssEditor::resized()
     // Header layout: wordmark on left (occupies ~ first 180 px), controls on right
     {
         auto hr = header.reduced (16, 12);
-        hr.removeFromLeft (180);   // wordmark gutter (painted in paint())
+        hr.removeFromLeft (340);   // wordmark gutter (painted in paint(); includes "by Gleinkaa")
         const int gap = 8;
         loadBtn.setBounds        (hr.removeFromRight (60));
         hr.removeFromRight (gap);
@@ -418,6 +707,8 @@ void KickAssEditor::resized()
         noteSnapCombo.setBounds  (hr.removeFromRight (70));
         hr.removeFromRight (gap);
         presetCombo.setBounds    (hr.removeFromLeft  (juce::jmin (260, hr.getWidth() - 200)));
+        // Modified-preset asterisk sits flush to the right edge of the preset combo.
+        modifiedDot.setBounds    (presetCombo.getRight() + 2, presetCombo.getY(), 14, presetCombo.getHeight());
     }
 
     auto vizArea = bounds.removeFromTop (340).reduced (16, 8);
@@ -428,8 +719,8 @@ void KickAssEditor::resized()
     // ---- Param row ----
     paramsRow.reduce (16, 8);
     // 6 panels with widths proportional to knob counts (more knobs = wider)
-    //   PITCH 6, AMP 6, SCOOP 3, TRANSIENT 5, DRIVE 2, MASTER 3   total = 25
-    const int totalKnobs = 6 + 6 + 3 + 5 + 2 + 3;
+    //   PITCH 6, AMP 6, SCOOP 3, TRANSIENT 5, DRIVE 2, MASTER 4   total = 26
+    const int totalKnobs = 6 + 6 + 3 + 5 + 2 + 4;
     const int gap = 8;
     const int availW = paramsRow.getWidth() - 5 * gap;
 
@@ -448,13 +739,22 @@ void KickAssEditor::resized()
     scoopPanel.setBounds     (cut (allocate (3)));
     transientPanel.setBounds (cut (allocate (5)));
     drivePanel.setBounds     (cut (allocate (2)));
-    masterPanel.setBounds    (paramsRow);   // remainder
+    masterPanel.setBounds    (paramsRow);   // remainder (MASTER = 4)
 
     // ---- Knob layouts inside each panel ----
     layoutKnobsInPanel (pitchPanel, { &startFreq, &midFreq, &endFreq,
                                        &sweepTime1, &sweepTime2, &pitchCurve }, 2);
     layoutKnobsInPanel (ampPanel,   { &volAttack, &volHold, &volDecay1,
                                        &volSustain, &volDecay2, &volCurve }, 2);
+
+    // Mode segmented control: right-anchored in the AMP panel header strip (top 24 px).
+    {
+        auto inner = ampPanel.getLocalBounds().reduced (8, 4);
+        auto headerStrip = inner.removeFromTop (20);
+        const int btnW = 56;
+        modeAdvancedBtn.setBounds (headerStrip.removeFromRight (btnW));
+        modeSimpleBtn  .setBounds (headerStrip.removeFromRight (btnW));
+    }
     layoutKnobsInPanel (scoopPanel, { &scoopStart, &scoopLength, &scoopDepth }, 1);
     layoutKnobsInPanel (drivePanel, { &drive, &tailDrive }, 1);
 
@@ -487,7 +787,7 @@ void KickAssEditor::resized()
         auto inner = masterPanel.getLocalBounds().reduced (8, 30);
         auto toggleRow = inner.removeFromTop (28);
         invertPhase.button.setBounds (toggleRow.reduced (2));
-        std::vector<KnobControl*> mknobs = { &outputGain, &pitchTrack };
+        std::vector<KnobControl*> mknobs = { &outputGain, &pitchTrack, &phaseOffset };
         const int rowH = inner.getHeight() / (int) mknobs.size();
         for (size_t i = 0; i < mknobs.size(); ++i)
         {
@@ -501,14 +801,18 @@ void KickAssEditor::resized()
     }
 
     // ---- Footer ----
+    // Layout (right → left so sizes are fixed, PLAY KICK gets whatever remains):
+    //   [PLAY KICK ··] [BPM slider 110px] [AUTO 70px] [EXPORT WAV 100px] [A/B 60px]
     footerRow.reduce (16, 8);
     const int btnGap = 8;
-    auto playW = footerRow.proportionOfWidth (0.50f);
-    playBtn.setBounds   (footerRow.removeFromLeft (playW));
-    footerRow.removeFromLeft (btnGap);
 
-    const int rightBtns = footerRow.getWidth();
-    abBtn.setBounds     (footerRow.removeFromRight ((rightBtns - btnGap) / 2));
+    abBtn.setBounds      (footerRow.removeFromRight (60));
     footerRow.removeFromRight (btnGap);
-    exportBtn.setBounds (footerRow);
+    exportBtn.setBounds  (footerRow.removeFromRight (100));
+    footerRow.removeFromRight (btnGap);
+    autoPlayBtn.setBounds (footerRow.removeFromRight (70));
+    footerRow.removeFromRight (btnGap);
+    bpmSlider.setBounds  (footerRow.removeFromRight (110));
+    footerRow.removeFromRight (btnGap);
+    playBtn.setBounds    (footerRow);   // remainder
 }

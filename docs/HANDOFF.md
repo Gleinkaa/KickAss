@@ -103,22 +103,26 @@ The previous session built and confirmed compile/link success but the user only 
 
 ---
 
-## Phase 6 (next session's main job): polish + DAW validation
+## Phase 8 (Polish): completed items
 
-Remaining v1.0 work, in priority order:
+All items below landed in the 2026-05-28 session. Build is clean, 11/11 tests pass.
+
+| # | Item | Status |
+|---|---|---|
+| 1 | **EXPORT WAV** — 24-bit stereo PCM, duration from AHDSR/curve, JUCE 8 `AudioFormatWriterOptions` | ✅ done |
+| 2 | **A/B compare** — two `ValueTree` slots; plain-click toggles, Shift-click copies current into inactive slot | ✅ done |
+| 3 | **Modified-preset `*` indicator** — APVTS listener on all params; suppression flag prevents false trips during load/A-B | ✅ done |
+| 4 | **Knob right-click popup menu** — `setPopupMenuEnabled(true)` on every `Slider` (JUCE built-in Reset/Edit/Copy/Paste) | ✅ done |
+| 5 | **Auto Play 4/4** — `LinearBar` BPM slider (60–200, default 145) + AUTO toggle; `juce::Timer` calls `triggerNote` every `60000/bpm` ms; restarts on BPM change | ✅ done |
+| 6 | **JUCE 8 deprecation sweep** — `AudioParameterFloat` positional ctors → `attrs()` helper; `createWriterFor` → `AudioFormatWriterOptions` | ✅ done |
+
+## Remaining v1.0 work (next session)
 
 1. **DAW validation matrix**: load in Reaper, Ableton Live, FL Studio, Bitwig. Confirm parameters, state recall, latency, MIDI routing. Document any DAW-specific issues.
-2. **Auto Play 4/4 timer**: BPM editor in header + `HighResolutionTimer` triggers `engine.triggerNote(60, 1.0, 0)` every `60000/bpm` ms. Looped visualizer playhead.
-3. **A/B compare**: snapshot two `ValueTree` states, toggle between them via the A/B footer button.
-4. **EXPORT WAV** button: render via `processor.offlineRender` at the host's sample rate (or 48k fallback), write WAV. Phase 5 has the offline-render path ready.
-5. **Right-click context menu on knobs**: Reset to default / Copy value / Paste value / Edit value… Use `juce::Slider::setPopupMenuEnabled (true)` + custom menu hook.
-6. **Modifier keys**: Ctrl-drag = fine, Shift-drag = step-snap. Set via `setVelocityBasedMode` + custom mouse handler.
-7. **Modified-preset indicator**: when any APVTS value differs from the loaded preset's stored values, show an asterisk in the preset combo label.
-8. **Arrow-key cycling**: when preset combo focused, ← / → cycles through presets with live audition.
-9. **`setTitle`/`setDescription`** on every Slider/Button for screen-reader hosts.
-10. **CI build script** in `scripts/build.bat` + GitHub Actions Windows runner (optional, but useful for the v1.0.0 release).
-11. **v1.0.0 git tag + GitHub Release** with a zip of `KickAss.vst3` + `KickAss.exe`.
-12. **DAW deprecation fix sweep**: search PluginEditor.cpp for any remaining `juce::Font (size, bold)` and switch to `KickFonts::ui (size, true)` from `KickAssLookAndFeel.h`.
+2. **Arrow-key cycling**: when preset combo is focused, ← / → cycles through presets with live audition.
+3. **`setTitle`/`setDescription`** on every Slider/Button for screen-reader hosts.
+4. **CI build script** in `scripts/build.bat` + GitHub Actions Windows runner (optional, useful for v1.0.0 release tag).
+5. **v1.0.0 git tag + GitHub Release** with a zip of `KickAss.vst3` + `KickAss.exe`.
 
 ---
 
@@ -154,7 +158,7 @@ KickAssProcessor
                   ├── user presets at %APPDATA%\KickAss\Presets\*.kickpreset / *.json
                   └── apply* methods write into apvts via setValueNotifyingHost
 
-KickAssEditor (1000×680, juce::FileDragAndDropTarget)
+KickAssEditor (resizable 1280×820, FileDragAndDropTarget, Timer)
 ├── lnf (KickAssLookAndFeel)
 ├── visualizer (WaveformDisplay — listens to APVTS, debounce 66ms, offline-renders)
 ├── header: presetCombo, noteSnapCombo, SAVE, LOAD
