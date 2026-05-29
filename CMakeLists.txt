@@ -61,6 +61,7 @@ target_sources(KickAss PRIVATE
     Source/WaveformDisplay.cpp
     Source/PresetManager.cpp
     Source/BreakpointEditor.cpp
+    Source/CrashLog.cpp
 )
 
 target_include_directories(KickAss PRIVATE Source)
@@ -97,6 +98,7 @@ if(KICKASS_BUILD_TESTS)
         Source/PluginProcessor.cpp
         Source/PresetManager.cpp
         Source/KickEngine.cpp
+        Source/CrashLog.cpp
     )
 
     target_include_directories(KickAss_Tests PRIVATE Source)
@@ -134,6 +136,7 @@ if(KICKASS_BUILD_TESTS)
         Source/PluginProcessor.cpp
         Source/PresetManager.cpp
         Source/KickEngine.cpp
+        Source/CrashLog.cpp
     )
 
     target_include_directories(KickAss_DspTests PRIVATE Source)
@@ -186,6 +189,36 @@ if(KICKASS_BUILD_TESTS)
             juce::juce_recommended_warning_flags
     )
 
+    #--------------------------------------------------------------------------
+    # CrashLog test — GUI-free crash-logging helper (Source/CrashLog.{h,cpp}):
+    # log-dir path, report formatting, file-write round-trip. No processor.
+    #   cmake --build build --config Release --target KickAss_CrashTests
+    #   build/KickAss_CrashTests_artefacts/Release/KickAss_CrashTests.exe
+    #--------------------------------------------------------------------------
+    juce_add_console_app(KickAss_CrashTests PRODUCT_NAME "KickAss_CrashTests")
+
+    target_sources(KickAss_CrashTests PRIVATE
+        Tests/CrashLogTest.cpp
+        Source/CrashLog.cpp
+    )
+
+    target_include_directories(KickAss_CrashTests PRIVATE Source)
+
+    target_compile_definitions(KickAss_CrashTests PRIVATE
+        JucePlugin_Name="KickAss"
+        KICKASS_HEADLESS_TESTS=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+    )
+
+    target_link_libraries(KickAss_CrashTests
+        PRIVATE
+            juce::juce_core
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags
+    )
+
     # Convenience: emit a "ctest"-runnable wrapper too.
     enable_testing()
     add_test(NAME curve_roundtrip
@@ -194,4 +227,6 @@ if(KICKASS_BUILD_TESTS)
              COMMAND $<TARGET_FILE:KickAss_DspTests>)
     add_test(NAME spectrum_util
              COMMAND $<TARGET_FILE:KickAss_SpectrumTests>)
+    add_test(NAME crash_log
+             COMMAND $<TARGET_FILE:KickAss_CrashTests>)
 endif()

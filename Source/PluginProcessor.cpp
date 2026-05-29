@@ -4,6 +4,7 @@
  #include "PluginEditor.h"
 #endif
 #include "PresetManager.h"
+#include "CrashLog.h"
 
 //==============================================================================
 // Parameter value-to-text formatters (per ARCHITECTURE.md §5 and research/03 §6.2)
@@ -201,6 +202,13 @@ KickAssProcessor::KickAssProcessor()
 {
     cacheParamPointers();
     presetManager = std::make_unique<PresetManager> (*this);
+
+    // v1.1 — crash logging. Install only for the Standalone wrapper: in a plugin
+    // we'd be overwriting the host's crash handler (rude, and the host's is
+    // better placed to capture context). Standalone is our own process, so it's
+    // fair game. Plugin-host crash capture is deferred (documented in STATUS).
+    if (wrapperType == wrapperType_Standalone)
+        kickass::crashlog::install();
 
     // Phase 6b: seed the breakpoint curve from the AHDSR defaults and persist it
     // in apvts.state under <Curves>/<Curve id="vol_env">. Editor can mutate
