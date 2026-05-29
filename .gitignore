@@ -2,6 +2,10 @@
 build/
 dist/
 out/
+
+# Installer compiler output (Inno Setup)
+installer/Output/
+*.exe
 *.vst3
 *.dll
 *.exp
