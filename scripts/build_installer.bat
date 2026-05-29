@@ -13,6 +13,8 @@ set "ISS=%ROOT%\installer\KickAss.iss"
 REM Locate ISCC.exe (Inno Setup compiler). Adjust if installed elsewhere.
 set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
 if not exist "%ISCC%" set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
+REM winget installs Inno Setup user-scope here by default:
+if not exist "%ISCC%" set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
 
 if not exist "%ISCC%" (
     echo [ERROR] ISCC.exe not found. Install Inno Setup 6 from https://jrsoftware.org/isdl.php
