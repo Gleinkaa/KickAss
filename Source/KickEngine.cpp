@@ -358,7 +358,10 @@ float KickEngine::renderOneDrySample() noexcept
         ampEnv *= 1.0f - (std::sin (juce::MathConstants<float>::pi * scoopPhase) * sDepth);
     }
 
-    float sample = osc * ampEnv;
+    // soloTransient (visualizer TRANSIENT view): mute the body so only the
+    // transient/sample layer below survives. `osc`/`ampEnv` are still advanced
+    // above so the voice timeline (and the sample read cursor) stays correct.
+    float sample = params.soloTransient ? 0.0f : (osc * ampEnv);
 
     // -------- 5. Transient layer (sum-in) --------
     // clickType 0=Sine 1=Noise 2=Both share the synthesized-click source below.

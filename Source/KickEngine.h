@@ -62,6 +62,13 @@ struct KickParams
     float outputGainDb = 0.0f;
     float pitchTrack   = 0.0f;    // 0..1 (UI is %)
     float phaseOffset  = 0.0f;    // 0..1 cycle fraction (UI is degrees)
+
+    // VISUALIZER-ONLY: when true, the synth body (pitched osc * amp env) is
+    // muted so renderOneDrySample emits ONLY the transient/sample layer. The
+    // realtime path never sets this (default false); offlineRenderTransient()
+    // flips it on the dedicated offline engine so the TRANSIENT view can show
+    // the bare click/sample shape without the body drowning it out.
+    bool  soloTransient = false;
 };
 
 //==============================================================================

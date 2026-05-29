@@ -126,22 +126,36 @@ void WaveformDisplay::resized()
 
 juce::Rectangle<int> WaveformDisplay::layoutTabs()
 {
-    // Three small tabs in the TOP-RIGHT of the header strip. Returns the strip
+    // Four small tabs in the TOP-RIGHT of the header strip. Returns the strip
     // they live in so paint() can keep the readouts clear of them.
-    constexpr int tabW = 64;
+    constexpr int tabW = 58;
     constexpr int tabH = 14;
     constexpr int gap  = 2;
     auto bounds = getLocalBounds();
     auto header = bounds.removeFromTop ((int) kHeaderStripPx);
 
-    auto tabsArea = header.removeFromRight (tabW * 3 + gap * 2 + 12).reduced (6, 4);
-    tabBoth     = tabsArea.removeFromRight (tabW);
+    auto tabsArea = header.removeFromRight (tabW * 4 + gap * 3 + 12).reduced (6, 4);
+    tabBoth      = tabsArea.removeFromRight (tabW);
     tabsArea.removeFromRight (gap);
-    tabSpectrum = tabsArea.removeFromRight (tabW);
+    tabSpectrum  = tabsArea.removeFromRight (tabW);
     tabsArea.removeFromRight (gap);
-    tabWave     = tabsArea.removeFromRight (tabW);
+    tabTransient = tabsArea.removeFromRight (tabW);
+    tabsArea.removeFromRight (gap);
+    tabWave      = tabsArea.removeFromRight (tabW);
     juce::ignoreUnused (tabH);
     return header;
+}
+
+void WaveformDisplay::frameTransientView()
+{
+    // Fit the zoom window to the detected transient length (+20% headroom),
+    // clamped so it's always a meaningful zoom-in but never below the deepest
+    // oscilloscope window. Leaves viewWindowMs=full if nothing was detected.
+    if (transientLenMs > 0.0f && durationMs > 0.0f)
+    {
+        const float win = juce::jlimit (kMinZoomMs, durationMs, transientLenMs * 1.2f);
+        viewWindowMs = (win >= durationMs - 0.05f) ? 0.0f : win;
+    }
 }
 
 void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
@@ -151,11 +165,39 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
     layoutTabs();
     const auto p = e.getPosition();
     if (tabWave.contains (p))     { viewMode = ViewMode::Wave;     repaint(); return; }
+    if (tabTransient.contains (p))
+    {
+        viewMode = ViewMode::Transient;
+        // The transient buffer is only kept up-to-date while this view is active,
+        // so force an immediate (un-debounced) render, then frame to its length.
+        dirty.store (true);
+        debounceCountdown = 1;
+        recomputeIfDirty();
+        frameTransientView();
+        repaint();
+        return;
+    }
     if (tabSpectrum.contains (p)) { viewMode = ViewMode::Spectrum; repaint(); return; }
     if (tabBoth.contains (p))     { viewMode = ViewMode::Both;     repaint(); return; }
 
     // Click anywhere else in the canvas = trigger preview (via UI→audio queue)
     processor.requestTrigger (60, 1.0f);
+}
+
+void WaveformDisplay::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    // Double-click on the canvas (not the tabs) resets the WAVE/TRANSIENT zoom to
+    // FULL. In TRANSIENT view, re-frame to the transient length instead so a
+    // double-click is always a one-tap "fit" gesture rather than a dead reset.
+    layoutTabs();
+    const auto p = e.getPosition();
+    if (tabWave.contains (p) || tabTransient.contains (p)
+        || tabSpectrum.contains (p) || tabBoth.contains (p))
+        return;
+
+    if (viewMode == ViewMode::Transient) frameTransientView();
+    else                                 viewWindowMs = 0.0f;   // full duration
+    repaint();
 }
 
 void WaveformDisplay::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w)
@@ -168,7 +210,7 @@ void WaveformDisplay::mouseWheelMove (const juce::MouseEvent&, const juce::Mouse
 
     float cur = (viewWindowMs > 0.0f) ? viewWindowMs : durationMs;
     cur *= (w.deltaY > 0.0f) ? 0.8f : 1.25f;
-    cur = juce::jlimit (2.0f, durationMs, cur);
+    cur = juce::jlimit (kMinZoomMs, durationMs, cur);
     // Snap back to "full" when we reach the whole duration.
     viewWindowMs = (cur >= durationMs - 0.05f) ? 0.0f : cur;
     repaint();
@@ -216,6 +258,28 @@ void WaveformDisplay::recomputeIfDirty()
     // 2. Audio render via the offline engine (UI thread, safe)
     processor.offlineRender (renderBuf, durationMs);
     renderSampleRate = 48000.0;
+
+    // 2a. Transient-only render — only kept current while the TRANSIENT view is
+    //     active (avoids paying for a second full render on every param change).
+    if (viewMode == ViewMode::Transient)
+    {
+        processor.offlineRenderTransient (transientBuf, durationMs);
+
+        // Detect the non-silent length so frameTransientView() can fit it.
+        transientLenMs = 0.0f;
+        if (transientBuf.getNumSamples() > 0)
+        {
+            const float* d = transientBuf.getReadPointer (0);
+            const int    n = transientBuf.getNumSamples();
+            float peak = 0.0f;
+            for (int i = 0; i < n; ++i) peak = juce::jmax (peak, std::abs (d[i]));
+            const float thresh = juce::jmax (1.0e-4f, peak * 0.02f);   // -34 dB rel. peak
+            int last = 0;
+            for (int i = n - 1; i >= 0; --i)
+                if (std::abs (d[i]) > thresh) { last = i; break; }
+            transientLenMs = (float) ((double) (last + 1) / renderSampleRate * 1000.0);
+        }
+    }
 
     // 2b. Spectrum (cached; recomputed only here, never in paint()).
     if (renderBuf.getNumSamples() > 0)
@@ -366,10 +430,15 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.setColour (textDim);
     g.setFont (KickFonts::mono (10.0f));
     auto leftReads  = headerStrip.reduced (10, 4);
-    juce::String reads = juce::String::formatted ("PEAK %+5.1f dBFS    LEN %.0f ms    END %s (%.1f Hz)",
-                                                   peakDb, durationMs, endNote.toRawUTF8(), endHz);
+    juce::String reads;
+    if (viewMode == ViewMode::Transient)
+        reads = juce::String::formatted ("TRANSIENT solo    SHAPE %.2f ms    PEAK %+5.1f dBFS",
+                                         transientLenMs, peakDb);
+    else
+        reads = juce::String::formatted ("PEAK %+5.1f dBFS    LEN %.0f ms    END %s (%.1f Hz)",
+                                         peakDb, durationMs, endNote.toRawUTF8(), endHz);
     if (viewMode != ViewMode::Spectrum)
-        reads << (viewWindowMs > 0.0f ? juce::String::formatted ("    ZOOM %.1f ms", viewWindowMs)
+        reads << (viewWindowMs > 0.0f ? juce::String::formatted ("    ZOOM %.2f ms", viewWindowMs)
                                       : juce::String ("    \xe2\x9f\xb2 scroll to zoom"));
     g.drawText (reads, leftReads.toNearestInt(), juce::Justification::centredLeft);
 
@@ -386,9 +455,10 @@ void WaveformDisplay::paint (juce::Graphics& g)
         g.setFont (KickFonts::ui (9.0f, active));
         g.drawText (label, r, juce::Justification::centred);
     };
-    drawTab (tabWave,     "WAVE",     ViewMode::Wave);
-    drawTab (tabSpectrum, "SPECTRUM", ViewMode::Spectrum);
-    drawTab (tabBoth,     "BOTH",     ViewMode::Both);
+    drawTab (tabWave,      "WAVE",      ViewMode::Wave);
+    drawTab (tabTransient, "TRANS",     ViewMode::Transient);
+    drawTab (tabSpectrum,  "SPECTRUM",  ViewMode::Spectrum);
+    drawTab (tabBoth,      "BOTH",      ViewMode::Both);
 
     g.setColour (accentHot.withAlpha (0.15f));
     g.drawHorizontalLine ((int) headerStrip.getBottom(), bounds.getX() + 8.0f, bounds.getRight() - 8.0f);
@@ -399,17 +469,23 @@ void WaveformDisplay::paint (juce::Graphics& g)
         paintSpectrum (g, bounds.toNearestInt());
         return;
     }
+    if (viewMode == ViewMode::Transient)
+    {
+        // Bare transient/sample layer, forced oscilloscope so the shape reads.
+        paintWave (g, bounds, transientBuf, /*forceScope*/ true, /*isTransientView*/ true);
+        return;
+    }
     if (viewMode == ViewMode::Both)
     {
         auto top = bounds;
         auto bottom = top.removeFromBottom (bounds.getHeight() * 0.5f);
-        paintWave (g, top);
+        paintWave (g, top, renderBuf, /*forceScope*/ false, /*isTransientView*/ false);
         paintSpectrum (g, bottom.toNearestInt());
         return;
     }
 
     // ViewMode::Wave (default)
-    paintWave (g, bounds);
+    paintWave (g, bounds, renderBuf, /*forceScope*/ false, /*isTransientView*/ false);
 }
 
 //==============================================================================
@@ -418,7 +494,8 @@ void WaveformDisplay::paint (juce::Graphics& g)
 // RMS core, and a crisp bright edge. The pitch and amp envelopes are demoted to
 // thin, low-alpha overlay lines so they still inform without competing.
 //==============================================================================
-void WaveformDisplay::paintWave (juce::Graphics& g, juce::Rectangle<float> bounds)
+void WaveformDisplay::paintWave (juce::Graphics& g, juce::Rectangle<float> bounds,
+                                 const juce::AudioBuffer<float>& buf, bool forceScope, bool isTransientView)
 {
     using namespace KickColors;
 
@@ -437,7 +514,7 @@ void WaveformDisplay::paintWave (juce::Graphics& g, juce::Rectangle<float> bound
     const float plotWf     = plotRight - plotLeft;
 
     // Visible window (zoom anchored at t=0). 0 = full duration.
-    const float winMs = (viewWindowMs > 0.0f) ? juce::jlimit (1.0f, durationMs, viewWindowMs)
+    const float winMs = (viewWindowMs > 0.0f) ? juce::jlimit (kMinZoomMs, durationMs, viewWindowMs)
                                               : durationMs;
 
     auto xForMs = [&] (float ms) noexcept
@@ -447,7 +524,7 @@ void WaveformDisplay::paintWave (juce::Graphics& g, juce::Rectangle<float> bound
     // "Nice" axis step so we get ~4–6 labels regardless of zoom.
     auto niceStep = [] (float win) noexcept
     {
-        const float cands[] = { 0.5f, 1, 2, 5, 10, 20, 25, 50, 100, 200, 500 };
+        const float cands[] = { 0.05f, 0.1f, 0.25f, 0.5f, 1, 2, 5, 10, 20, 25, 50, 100, 200, 500 };
         for (float s : cands) if (win / s <= 6.0f) return s;
         return 1000.0f;
     };
@@ -482,7 +559,9 @@ void WaveformDisplay::paintWave (juce::Graphics& g, juce::Rectangle<float> bound
         for (float ms = 0.0f; ms <= winMs + 0.01f; ms += step)
         {
             const float x = xForMs (ms);
-            const juce::String lbl = (step < 1.0f) ? juce::String (ms, 1) : juce::String ((int) ms);
+            const juce::String lbl = (step < 0.5f) ? juce::String (ms, 2)
+                                   : (step < 1.0f) ? juce::String (ms, 1)
+                                                   : juce::String ((int) ms);
             g.drawText (lbl, (int) (x - 16), (int) bottomAxis.getY(),
                         32, (int) bottomAxis.getHeight(), juce::Justification::centred);
         }
@@ -490,15 +569,15 @@ void WaveformDisplay::paintWave (juce::Graphics& g, juce::Rectangle<float> bound
 
     // ---- 2. Waveform — the hero. Adaptive: oscilloscope when zoomed in enough to
     //      resolve individual cycles, mirrored min/max hull when zoomed out. ----
-    if (renderBuf.getNumSamples() > 0 && winMs > 0.0f)
+    if (buf.getNumSamples() > 0 && winMs > 0.0f)
     {
-        const int    n = renderBuf.getNumSamples();
-        const float* d = renderBuf.getReadPointer (0);
+        const int    n = buf.getNumSamples();
+        const float* d = buf.getReadPointer (0);
         const int    plotW = juce::jmax (1, (int) std::ceil (plotWf));
         const int    visN  = juce::jlimit (1, n, (int) std::round (winMs * 0.001f * (float) renderSampleRate));
         const float  samplesPerPx = (float) visN / (float) plotW;
 
-        if (samplesPerPx < 2.5f)
+        if (forceScope || samplesPerPx < 2.5f)
         {
             // ---- OSCILLOSCOPE: trace the actual samples (modern, shows the wiggle
             //      — essential for transient shaping). Filled to the center axis. ----
@@ -586,8 +665,10 @@ void WaveformDisplay::paintWave (juce::Graphics& g, juce::Rectangle<float> bound
     };
     const int plotWpx = juce::jmax (2, (int) std::ceil (plotWf));
 
+    // The amp/pitch overlays describe the BODY envelope — meaningless (and
+    // misleading) over the soloed transient, so suppress them in that view.
     // ---- 3. Amp envelope — thin yellow overlay shell (top edge) ----
-    if (! ampEnvTrace.empty() && winMs > 0.0f)
+    if (! isTransientView && ! ampEnvTrace.empty() && winMs > 0.0f)
     {
         juce::Path envLine;
         for (int px = 0; px < plotWpx; ++px)
@@ -603,7 +684,7 @@ void WaveformDisplay::paintWave (juce::Graphics& g, juce::Rectangle<float> bound
     }
 
     // ---- 4. Pitch envelope — thin cyan overlay across full height (log-Y) ----
-    if (! pitchHzTrace.empty() && winMs > 0.0f)
+    if (! isTransientView && ! pitchHzTrace.empty() && winMs > 0.0f)
     {
         juce::Path pitchPath;
         for (int px = 0; px < plotWpx; ++px)

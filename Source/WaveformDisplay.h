@@ -33,20 +33,26 @@ public:
     void resized() override;
     void timerCallback() override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
     // APVTS::Listener
     void parameterChanged (const juce::String& paramID, float newValue) override;
 
     // Visualizer view modes — default Wave so existing screenshots/behavior are
-    // unchanged until the user clicks a tab.
-    enum class ViewMode { Wave, Spectrum, Both };
+    // unchanged until the user clicks a tab. TRANSIENT shows the bare transient/
+    // sample layer (body muted) as an oscilloscope so its shape is legible.
+    enum class ViewMode { Wave, Transient, Spectrum, Both };
 
 private:
     KickAssProcessor& processor;
 
     // Render buffer (mono, last offline kick).
     juce::AudioBuffer<float> renderBuf;
+    // Transient-only render (body muted) — backs the TRANSIENT view. Rendered
+    // lazily, only while the TRANSIENT view is active (see recomputeIfDirty).
+    juce::AudioBuffer<float> transientBuf;
+    float  transientLenMs = 0.0f;     // detected non-silent length of transientBuf
     double renderSampleRate = 48000.0;
 
     // View mode + cached spectrum (recomputed only on re-render, not every repaint).
@@ -55,11 +61,17 @@ private:
     // 0 = full duration; >0 = visible window in ms. Scroll over the canvas to change.
     float viewWindowMs = 0.0f;
     kickass::SpectrumResult spectrum;
-    juce::Rectangle<int> tabWave, tabSpectrum, tabBoth;   // top-right clickable tabs
+    juce::Rectangle<int> tabWave, tabTransient, tabSpectrum, tabBoth;   // top-right clickable tabs
 
-    void paintWave (juce::Graphics&, juce::Rectangle<float> areaBelowHeader);
+    // Deepest zoom-in window (ms). Lets the oscilloscope resolve a handful of
+    // samples so the transient sample shape is fully visible.
+    static constexpr float kMinZoomMs = 0.2f;
+
+    void paintWave (juce::Graphics&, juce::Rectangle<float> areaBelowHeader,
+                    const juce::AudioBuffer<float>& buf, bool forceScope, bool isTransientView);
     void paintSpectrum (juce::Graphics&, juce::Rectangle<int> area);
     juce::Rectangle<int> layoutTabs();                    // computes tab rects, returns the strip used
+    void frameTransientView();                            // auto-zoom to transientLenMs
 
     // Pre-computed envelope traces for paint() (one entry per pixel column).
     std::vector<float> ampEnvTrace;     // 0..1

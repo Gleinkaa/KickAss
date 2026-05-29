@@ -396,6 +396,16 @@ void KickAssProcessor::setStateInformation (const void* data, int sizeInBytes)
 //==============================================================================
 void KickAssProcessor::offlineRender (juce::AudioBuffer<float>& buffer, double durationMs)
 {
+    offlineRenderImpl (buffer, durationMs, /*soloTransient*/ false);
+}
+
+void KickAssProcessor::offlineRenderTransient (juce::AudioBuffer<float>& buffer, double durationMs)
+{
+    offlineRenderImpl (buffer, durationMs, /*soloTransient*/ true);
+}
+
+void KickAssProcessor::offlineRenderImpl (juce::AudioBuffer<float>& buffer, double durationMs, bool soloTransient)
+{
     // UI-thread render for the visualizer. Uses a DEDICATED offline engine so realtime
     // state (phase, env, oversampler) is never touched by the UI.
     KickParams p;
@@ -427,6 +437,7 @@ void KickAssProcessor::offlineRender (juce::AudioBuffer<float>& buffer, double d
     p.outputGainDb = pOutputGain->load();
     p.pitchTrack   = 0.0f;   // visualizer always renders at note 60 (no transpose) for stable view
     p.phaseOffset  = pPhaseOffset->load() * (1.0f / 360.0f);   // degrees → 0..1
+    p.soloTransient = soloTransient;
 
     offlineEngine.setParams (p);
     offlineEngine.setCurveMode (isEnvelopeAdvanced());

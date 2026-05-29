@@ -58,6 +58,11 @@ public:
     /** UI-thread offline render for the visualizer (Phase 4). */
     void offlineRender (juce::AudioBuffer<float>& buffer, double durationMs);
 
+    /** UI-thread offline render of ONLY the transient/sample layer (body muted).
+        Backs the visualizer's TRANSIENT view so the bare click/sample shape is
+        visible. Same fixed 48 kHz + dedicated offline engine as offlineRender. */
+    void offlineRenderTransient (juce::AudioBuffer<float>& buffer, double durationMs);
+
     /** Offline-render the current patch to a 24-bit stereo WAV at `dest`
         (48 kHz, matching offlineRender). Used by EXPORT WAV and the v1.1
         drag-out affordance, and exercised headlessly by Tests/RenderWavTest.cpp.
@@ -142,6 +147,10 @@ private:
     // Cached atomic pointers — read once, avoid the lookup on the audio thread.
     void cacheParamPointers();
     void readParamsIntoEngine();
+
+    // Shared body for offlineRender / offlineRenderTransient. Builds KickParams
+    // from the current APVTS values; `soloTransient` mutes the synth body.
+    void offlineRenderImpl (juce::AudioBuffer<float>& buffer, double durationMs, bool soloTransient);
 
     // PITCH
     std::atomic<float>* pStartFreq    = nullptr;
