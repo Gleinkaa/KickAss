@@ -140,8 +140,8 @@ Effort numbers are honest (calendar, not optimistic). Test-first: every DSP chan
 
 - [x] **DSP regression net** (`Tests/DspSafetyTest.cpp`) — non-silence / state round-trip / param fuzz / extremes. *Done 2026-05-29.*
 - [x] **Saturation type selector** {Tanh, SoftClip, HardClip, Tube, Foldback} (`research/01` §4.8). Default Tanh = v1.0 parity. *Done 2026-05-29.*
-- [ ] **Output safety limiter** — true-peak ceiling at −0.1 dBTP, defeatable. Ship-blocker for ears with 5 sat modes × high drive.
-- [ ] **Spectrum FFT view** (2D, single `[WAVE|SPECTRUM|BOTH]` tab) — finishes the punted Phase 4 spec. Offline buffer already exists; ~80 lines `juce::dsp::FFT`.
+- [x] **Output safety limiter** — sample-peak ceiling at −0.1 dBFS after output gain, defeatable (`safety_limit`, default ON). *Done 2026-05-29. NOTE: sample-peak, not true-peak/dBTP — inter-sample/lookahead deferred.*
+- [x] **Spectrum FFT view** (2D, `[WAVE|SPECTRUM|BOTH]` tabs) — finishes the punted Phase 4 spec. FFT in header-only `SpectrumUtil.h`, headless-tested. *Done 2026-05-29.*
 - [ ] **Undo/redo** via `juce::UndoManager` wired to APVTS — cheap, protects breakpoint-editor work.
 - [ ] **Sample-slot transient** — drag a `.wav` onto the transient section (`AudioFormatReader` → buffer playback). KICK 2's killer feature; `clickType` enum + filter chain already there.
 - [ ] **Resizable window** — `setResizeLimits(900, 600, 1400, 900)`. ~10 lines.
