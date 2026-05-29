@@ -1,11 +1,75 @@
 # KickAss — Session Handoff
 
 > For the next Claude session picking up this work.
-> Last updated: 2026-05-27 by previous session.
+> Last updated: 2026-05-29 (v1.1 ship-prep merged).
 
 ---
 
-## TL;DR for the next session
+## ⏩ CURRENT HANDOFF — 2026-05-29 (v1.1)
+
+**This block supersedes everything below it** (kept for history). `STATUS.md` is the
+living status; this is the next-session entry point.
+
+### Where things stand
+- **Branch/commits:** all work is on **`master` @ `d3085d7`**, **11 commits ahead of
+  `origin/master` and UNPUSHED** (user is deliberately holding the push). The
+  `v1.1-sonic-variety` and `v1.1-ship-prep` feature branches were merged
+  (fast-forward) and **deleted** — master is the only branch.
+- **Health:** VST3 + Standalone build **clean**; **`ctest` → 5/5 pass**; working tree clean.
+- **v1.0** is functionally complete (Phases 0–8). **v1.1 "Sonic Variety"** added, in two batches:
+
+  **Batch 1 — sonic features (merged + ears-on verified by the user 2026-05-29):**
+  DSP regression net · saturation types {Tanh, Soft Clip, Hard Clip, Tube, Foldback} ·
+  output safety limiter (−0.1 dBFS, defeatable) · spectrum view (WAVE|SPECTRUM|BOTH) ·
+  undo/redo (Ctrl+Z/Y) · sample-slot transient (drag a WAV onto the TRANSIENT panel).
+
+  **Batch 2 — ship-prep (merged 2026-05-29, headless-tested, NOT yet manually verified):**
+  - **Crash logging** — `Source/CrashLog.{h,cpp}`. `SystemStats` handler writes a
+    timestamped report (app/JUCE/OS/CPU + stack backtrace) to `%APPDATA%\KickAss\Logs`.
+    Installed **Standalone-only** (`wrapperType == wrapperType_Standalone`) to avoid
+    hijacking a host's handler — plugin-host crash capture is deferred. Test: `KickAss_CrashTests`.
+  - **Drag-out WAV** — footer **DRAG WAV ↗** affordance; editor is now a
+    `juce::DragAndDropContainer`. Drag it onto the desktop / a DAW track to drop a
+    freshly-rendered 24-bit/48k stereo WAV. Render path lives in
+    `KickAssProcessor::renderToWavFile()` (shared with EXPORT WAV; duration via
+    `computeRenderDurationMs()`). Test: `KickAss_RenderTests`.
+  - **Inno installer** — `installer/KickAss.iss` + `scripts/build_installer.bat`
+    (VST3→Common Files\VST3, Standalone→Program Files\KickAss, components/uninstall/
+    shortcuts). **Authored but NOT compiled** — Inno Setup 6 isn't installed on this
+    machine; the `.bat` fails gracefully with install instructions.
+
+### Build / test / run
+```powershell
+cd D:\GoogleDrive\B_projects\KickAss
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64        # only after CMake changes
+cmake --build build --config Release --target KickAss_All     # close the Standalone first (file-lock!)
+ctest --test-dir build -C Release --output-on-failure         # 5 suites: curve / dsp / spectrum / crash / render
+.\build\KickAss_artefacts\Release\Standalone\KickAss.exe      # run standalone
+```
+
+### NEXT — pick up here (in priority order)
+1. **Manual-verify the two untested batch-2 features:** drag the **DRAG WAV ↗** footer
+   button onto the desktop → confirm a playable WAV lands. (Crash handler is hard to
+   exercise on purpose — low priority.)
+2. **Compile the installer:** install Inno Setup 6 → run `scripts\build_installer.bat`
+   → confirm `installer\Output\KickAss-1.1.0-Setup.exe`. Then test install/uninstall.
+   NOTE version mismatch: installer says `1.1.0`, CMake `project(... VERSION 0.1.0)` —
+   bump the CMake version when you cut the release.
+3. **Push to `origin`** (`git push origin master`) once the user OKs it — it's been on hold.
+4. **DAW validation matrix** (the long-standing v1.0 open item): load the VST3 in
+   Reaper / Ableton / FL → verify params, state recall, latency, MIDI routing.
+5. **Release:** tag + GitHub Release with `KickAss.vst3` + the installer.
+
+### Carried-forward limitations (deliberate, documented)
+- Undo does **not** cover freehand breakpoint-curve drags (curve lives in `apvts.state`,
+  not as an APVTS param; param undo re-syncs the curve).
+- Sample-slot transient persistence is **path-based** (no embedded audio yet).
+- Safety limiter is **sample-peak**, not true-peak.
+- Crash logging is Standalone-only (no plugin-host capture yet).
+
+---
+
+## TL;DR for the next session  *(historical — pre-v1.1, see CURRENT HANDOFF above)*
 
 KickAss is a **VST3 + Standalone kick-drum synth** for Windows (macOS + CLAP planned for v1.x). The DSP is a faithful port of `reference/BazzismRebuild.py` with critical additions: 4× oversampling around the tanh stage, DC blocker, soft-clip ceiling, transient layer with switchable Sine/Noise/Both sources.
 
