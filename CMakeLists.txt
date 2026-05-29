@@ -219,6 +219,42 @@ if(KICKASS_BUILD_TESTS)
             juce::juce_recommended_warning_flags
     )
 
+    #--------------------------------------------------------------------------
+    # RenderWav test — KickAssProcessor::renderToWavFile, the shared render-to-disk
+    # path behind EXPORT WAV + the v1.1 drag-out affordance. Constructs the
+    # processor headlessly and validates the written WAV.
+    #   cmake --build build --config Release --target KickAss_RenderTests
+    #   build/KickAss_RenderTests_artefacts/Release/KickAss_RenderTests.exe
+    #--------------------------------------------------------------------------
+    juce_add_console_app(KickAss_RenderTests PRODUCT_NAME "KickAss_RenderTests")
+
+    target_sources(KickAss_RenderTests PRIVATE
+        Tests/RenderWavTest.cpp
+        Source/PluginProcessor.cpp
+        Source/PresetManager.cpp
+        Source/KickEngine.cpp
+        Source/CrashLog.cpp
+    )
+
+    target_include_directories(KickAss_RenderTests PRIVATE Source)
+
+    target_compile_definitions(KickAss_RenderTests PRIVATE
+        JucePlugin_Name="KickAss"
+        KICKASS_HEADLESS_TESTS=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+    )
+
+    target_link_libraries(KickAss_RenderTests
+        PRIVATE
+            juce::juce_audio_utils
+            juce::juce_audio_formats
+            juce::juce_dsp
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags
+    )
+
     # Convenience: emit a "ctest"-runnable wrapper too.
     enable_testing()
     add_test(NAME curve_roundtrip
@@ -229,4 +265,6 @@ if(KICKASS_BUILD_TESTS)
              COMMAND $<TARGET_FILE:KickAss_SpectrumTests>)
     add_test(NAME crash_log
              COMMAND $<TARGET_FILE:KickAss_CrashTests>)
+    add_test(NAME render_wav
+             COMMAND $<TARGET_FILE:KickAss_RenderTests>)
 endif()

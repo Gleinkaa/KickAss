@@ -433,6 +433,43 @@ void KickAssProcessor::offlineRender (juce::AudioBuffer<float>& buffer, double d
     offlineEngine.renderOffline (buffer, 48000.0, durationMs);
 }
 
+bool KickAssProcessor::renderToWavFile (const juce::File& dest, double durationMs)
+{
+    // 1. Render mono at offlineRender's fixed 48 kHz.
+    constexpr double sr = 48000.0;
+    juce::AudioBuffer<float> mono;
+    offlineRender (mono, durationMs);
+    if (mono.getNumSamples() <= 0)
+        return false;
+
+    // 2. Promote to stereo for broad DAW compatibility.
+    juce::AudioBuffer<float> stereo (2, mono.getNumSamples());
+    stereo.copyFrom (0, 0, mono, 0, 0, mono.getNumSamples());
+    stereo.copyFrom (1, 0, mono, 0, 0, mono.getNumSamples());
+
+    // 3. Write 24-bit PCM WAV (mirrors the EXPORT WAV path).
+    dest.getParentDirectory().createDirectory();
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::OutputStream> out (dest.createOutputStream());
+    if (out == nullptr)
+        return false;
+
+    out->setPosition (0);
+    if (auto* fos = dynamic_cast<juce::FileOutputStream*> (out.get()))
+        fos->truncate();
+
+    const auto opts = juce::AudioFormatWriterOptions()
+                          .withSampleRate (sr)
+                          .withNumChannels (2)
+                          .withBitsPerSample (24);
+
+    // JUCE 8 createWriterFor takes the unique_ptr by ref and moves out of it on success.
+    if (auto writer = wav.createWriterFor (out, opts))
+        return writer->writeFromAudioSampleBuffer (stereo, 0, stereo.getNumSamples());
+
+    return false;
+}
+
 //==============================================================================
 // v1.1 — drag-a-WAV transient layer (load / clear / persist)
 //==============================================================================

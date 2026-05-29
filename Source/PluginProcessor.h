@@ -58,6 +58,12 @@ public:
     /** UI-thread offline render for the visualizer (Phase 4). */
     void offlineRender (juce::AudioBuffer<float>& buffer, double durationMs);
 
+    /** Offline-render the current patch to a 24-bit stereo WAV at `dest`
+        (48 kHz, matching offlineRender). Used by EXPORT WAV and the v1.1
+        drag-out affordance, and exercised headlessly by Tests/RenderWavTest.cpp.
+        Creates parent dirs as needed. Returns false on render/IO failure. */
+    bool renderToWavFile (const juce::File& dest, double durationMs);
+
     //==============================================================================
     // v1.1 — drag-a-WAV transient layer.
     //

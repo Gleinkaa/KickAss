@@ -43,8 +43,26 @@ private:
 };
 
 //==============================================================================
+// v1.1 — drag-out source. A footer affordance the user drags onto the desktop
+// or a DAW track; on drag it renders the current kick to a temp WAV and starts
+// an external file drag. A plain click does nothing (use EXPORT WAV for that).
+//==============================================================================
+class DragOutButton : public juce::Component
+{
+public:
+    DragOutButton() { setMouseCursor (juce::MouseCursor::DraggingHandCursor); }
+    std::function<void (const juce::MouseEvent&)> onDrag;
+    void mouseDrag (const juce::MouseEvent& e) override { if (onDrag) onDrag (e); }
+    void paint (juce::Graphics&) override;
+
+private:
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DragOutButton)
+};
+
+//==============================================================================
 class KickAssEditor : public juce::AudioProcessorEditor,
                        public juce::FileDragAndDropTarget,
+                       public juce::DragAndDropContainer,
                        public juce::AudioProcessorValueTreeState::Listener,
                        public juce::Timer
 {
@@ -122,6 +140,7 @@ private:
     juce::Slider     bpmSlider;                      // 60–200, default 145, LinearBar
     juce::TextButton autoPlayBtn { "AUTO" };
     juce::TextButton exportBtn  { "EXPORT WAV" };
+    DragOutButton    dragOutBtn;                     // drag a rendered WAV onto desktop/DAW
     juce::TextButton abBtn      { "A/B" };
     juce::TextButton undoBtn    { "UNDO" };
     juce::TextButton redoBtn    { "REDO" };
@@ -145,6 +164,8 @@ private:
     void doSavePreset();
     void doLoadPreset();
     void doExportWav();
+    double computeRenderDurationMs() const;          // shared by export + drag-out
+    void beginWavDragOut (const juce::MouseEvent&);   // v1.1 drag-out
     void doToggleAB();
     void doCopyAB();
 

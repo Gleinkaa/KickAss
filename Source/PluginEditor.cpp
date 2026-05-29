@@ -189,11 +189,13 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
     // ---- Footer buttons ----
     addAndMakeVisible (playBtn);
     addAndMakeVisible (exportBtn);
+    addAndMakeVisible (dragOutBtn);
     addAndMakeVisible (abBtn);
     addAndMakeVisible (undoBtn);
     addAndMakeVisible (redoBtn);
     playBtn.onClick   = [this] { triggerPreviewNote(); };
     exportBtn.onClick = [this] { doExportWav(); };
+    dragOutBtn.onDrag = [this] (const juce::MouseEvent& e) { beginWavDragOut (e); };
     undoBtn.onClick   = [this] { doUndo(); };
     redoBtn.onClick   = [this] { doRedo(); };
     // Capture keyboard focus so Ctrl+Z / Ctrl+Shift+Z reach keyPressed().
@@ -342,25 +344,27 @@ void KickAssEditor::doSavePreset()
 //==============================================================================
 // Phase 8 — EXPORT WAV
 //==============================================================================
-void KickAssEditor::doExportWav()
+double KickAssEditor::computeRenderDurationMs() const
 {
-    // Pick a sensible default duration from the current envelope. In Advanced
-    // mode that's the curve's total time; in Simple it's the AHDSR sum. Add
-    // 50 ms tail so the final decay isn't clipped.
-    double durationMs;
+    // Pick a sensible duration from the current envelope. In Advanced mode that's
+    // the curve's total time; in Simple it's the AHDSR sum. Add 50 ms tail so the
+    // final decay isn't clipped. Shared by EXPORT WAV and the drag-out affordance.
     if (processorRef.isEnvelopeAdvanced())
     {
         juce::SpinLock::ScopedLockType l (processorRef.getVolCurveLock());
-        durationMs = juce::jmax (200.0f, processorRef.getVolEnvCurve().getTotalMs() + 50.0f);
+        return juce::jmax (200.0f, processorRef.getVolEnvCurve().getTotalMs() + 50.0f);
     }
-    else
-    {
-        const float ta  = *processorRef.apvts.getRawParameterValue ("vol_attack");
-        const float th  = *processorRef.apvts.getRawParameterValue ("vol_hold");
-        const float td1 = *processorRef.apvts.getRawParameterValue ("vol_decay_1");
-        const float td2 = *processorRef.apvts.getRawParameterValue ("vol_decay_2");
-        durationMs = juce::jmax (200.0, (double) (ta + th + td1 + td2) + 50.0);
-    }
+
+    const float ta  = *processorRef.apvts.getRawParameterValue ("vol_attack");
+    const float th  = *processorRef.apvts.getRawParameterValue ("vol_hold");
+    const float td1 = *processorRef.apvts.getRawParameterValue ("vol_decay_1");
+    const float td2 = *processorRef.apvts.getRawParameterValue ("vol_decay_2");
+    return juce::jmax (200.0, (double) (ta + th + td1 + td2) + 50.0);
+}
+
+void KickAssEditor::doExportWav()
+{
+    const double durationMs = computeRenderDurationMs();
 
     fileChooser = std::make_unique<juce::FileChooser> (
         "Export kick as WAV",
@@ -377,33 +381,50 @@ void KickAssEditor::doExportWav()
             if (! f.hasFileExtension (".wav"))
                 f = f.withFileExtension (".wav");
 
-            // 1. Render mono buffer at 48 kHz (offlineRender's fixed rate).
-            constexpr double sr = 48000.0;
-            juce::AudioBuffer<float> mono;
-            processorRef.offlineRender (mono, durationMs);
-
-            // 2. Promote to stereo for broad DAW compatibility.
-            juce::AudioBuffer<float> stereo (2, mono.getNumSamples());
-            stereo.copyFrom (0, 0, mono, 0, 0, mono.getNumSamples());
-            stereo.copyFrom (1, 0, mono, 0, 0, mono.getNumSamples());
-
-            // 3. Write 24-bit PCM WAV (DAW-friendly headroom).
-            juce::WavAudioFormat wav;
-            std::unique_ptr<juce::OutputStream> out (f.createOutputStream());
-            if (out)
-            {
-                out->setPosition (0);
-                if (auto* fos = dynamic_cast<juce::FileOutputStream*> (out.get()))
-                    fos->truncate();
-                const auto opts = juce::AudioFormatWriterOptions()
-                                      .withSampleRate (sr)
-                                      .withNumChannels (2)
-                                      .withBitsPerSample (24);
-                // JUCE 8 createWriterFor takes the unique_ptr by ref and moves out of it on success.
-                if (auto writer = wav.createWriterFor (out, opts))
-                    writer->writeFromAudioSampleBuffer (stereo, 0, stereo.getNumSamples());
-            }
+            processorRef.renderToWavFile (f, durationMs);
         });
+}
+
+//==============================================================================
+// v1.1 — drag a rendered WAV out onto the desktop / a DAW track.
+//==============================================================================
+void KickAssEditor::beginWavDragOut (const juce::MouseEvent& e)
+{
+    // mouseDrag fires repeatedly; only kick off one external drag per gesture,
+    // and only once the pointer has actually moved (so a stray click is ignored).
+    if (isDragAndDropActive() || e.getDistanceFromDragStart() < 6)
+        return;
+
+    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                   .getChildFile ("KickAss");
+    dir.createDirectory();
+
+    // Name from the active preset (falls back to "kick") so the dropped file is
+    // recognisable; timestamp keeps repeated drags from colliding.
+    auto base = presetCombo.getText();
+    if (base.isEmpty() || base.startsWith ("---")) base = "kick";
+    base = juce::File::createLegalFileName (base);
+    auto wav = dir.getChildFile (base + "_"
+                   + juce::String (juce::Time::getCurrentTime().toMilliseconds()) + ".wav");
+
+    if (processorRef.renderToWavFile (wav, computeRenderDurationMs()))
+        performExternalDragDropOfFiles ({ wav.getFullPathName() }, /*canMoveFiles*/ false);
+}
+
+//==============================================================================
+// DragOutButton — drawn to read like the other footer buttons.
+//==============================================================================
+void DragOutButton::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (1.0f);
+    g.setColour (KickColors::panel.brighter (0.05f));
+    g.fillRoundedRectangle (r, 4.0f);
+    g.setColour (KickColors::accentHot.withAlpha (0.45f));
+    g.drawRoundedRectangle (r, 4.0f, 1.0f);
+    g.setColour (KickColors::accentHot.withAlpha (0.85f));
+    g.setFont (KickFonts::ui (11.0f, true));
+    g.drawText (juce::String::fromUTF8 ("DRAG WAV \xe2\x86\x97"),  // "DRAG WAV ↗"
+                getLocalBounds(), juce::Justification::centred);
 }
 
 //==============================================================================
@@ -959,7 +980,7 @@ void KickAssEditor::resized()
 
     // ---- Footer ----
     // Layout (right → left so sizes are fixed, PLAY KICK gets whatever remains):
-    //   [PLAY KICK ··] [BPM 110] [AUTO 70] [EXPORT 100] [A/B 60] [REDO 56] [UNDO 56]
+    //   [PLAY KICK ··] [BPM 110] [AUTO 70] [EXPORT 100] [DRAG WAV 92] [A/B 60] [REDO 56] [UNDO 56]
     footerRow.reduce (16, 8);
     const int btnGap = 8;
 
@@ -968,6 +989,8 @@ void KickAssEditor::resized()
     undoBtn.setBounds    (footerRow.removeFromRight (56));
     footerRow.removeFromRight (btnGap);
     abBtn.setBounds      (footerRow.removeFromRight (60));
+    footerRow.removeFromRight (btnGap);
+    dragOutBtn.setBounds (footerRow.removeFromRight (92));
     footerRow.removeFromRight (btnGap);
     exportBtn.setBounds  (footerRow.removeFromRight (100));
     footerRow.removeFromRight (btnGap);
