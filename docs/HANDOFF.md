@@ -60,10 +60,12 @@ ctest --test-dir build -C Release --output-on-failure         # 5 suites: curve 
 1. **Manual-verify the two untested batch-2 features:** drag the **DRAG WAV ↗** footer
    button onto the desktop → confirm a playable WAV lands. (Crash handler is hard to
    exercise on purpose — low priority.)
-2. **Compile the installer:** install Inno Setup 6 → run `scripts\build_installer.bat`
-   → confirm `installer\Output\KickAss-1.1.0-Setup.exe`. Then test install/uninstall.
-   (Version mismatch is RESOLVED — CMake is now `1.1.0`, matching the installer.)
-   Inno Setup 6 is still **not installed** on this machine; `iscc.exe` isn't on PATH.
+2. **Installer — COMPILED ✅.** Inno Setup 6.7.3 is now installed (winget, user-scope at
+   `%LOCALAPPDATA%\Programs\Inno Setup 6`; `build_installer.bat` now finds it there).
+   `scripts\build_installer.bat` produced `installer\Output\KickAss-1.1.0-Setup.exe`
+   (5 MB, ProductVersion 1.1.0, bundles VST3 + Standalone). Version mismatch RESOLVED.
+   **Remaining:** run the `.exe` to test the install + uninstall flow (writes to Program
+   Files / Common Files VST3 — needs an admin prompt; left for a hands-on session).
 3. **Push to `origin`** (`git push origin master`) once the user OKs it — it's been on hold.
 4. **DAW validation matrix** (the long-standing v1.0 open item): load the VST3 in
    Reaper / Ableton / FL → verify params, state recall, latency, MIDI routing.
