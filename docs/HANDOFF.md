@@ -11,12 +11,13 @@
 living status; this is the next-session entry point.
 
 ### Where things stand
-- **Branch/commits:** all work is on **`master`**, **UNPUSHED** (user is deliberately
-  holding the push). Last *substantive* commit is **`d3085d7`** (Inno installer + STATUS);
-  this handoff refresh sits on top of it (docs-only), so `git log` will show master a
-  commit or two further ahead than the code state — count the ahead number from
-  `git status -sb`, not from here. The `v1.1-sonic-variety` and `v1.1-ship-prep` feature
-  branches were merged (fast-forward) and **deleted** — master is the only branch.
+- **PUSHED + RELEASED (2026-05-29 late):** `master` is pushed to `origin` (tip `4482fa2`)
+  and **`v1.1.0` is tagged + a public GitHub Release is live** with two assets:
+  `KickAss-1.1.0-Setup.exe` (Inno installer) and `KickAss-1.1.0-win64-portable.zip`
+  (VST3 + Standalone + README). Release: <https://github.com/Gleinkaa/KickAss/releases/tag/v1.1.0>.
+  This is the **first review build** — sent to the user + friends for feedback; the next
+  session's job is to triage that feedback. The `v1.1-sonic-variety` / `v1.1-ship-prep`
+  feature branches were merged (fast-forward) and **deleted** — master is the only branch.
 - **Health:** VST3 + Standalone build **clean**; **`ctest` → 5/5 pass**; working tree clean.
 - **Version:** bumped CMake `project(KickAss VERSION 1.1.0)` (was 0.1.0) so it matches the
   installer's `1.1.0`. Verified the built Standalone EXE now reports FileVersion/ProductVersion
@@ -56,35 +57,41 @@ ctest --test-dir build -C Release --output-on-failure         # 5 suites: curve 
 .\build\KickAss_artefacts\Release\Standalone\KickAss.exe      # run standalone
 ```
 
-### ⭐ ACTIVE FOCUS (user's current direction — 2026-05-29 late session)
-The WAVE visualizer was reworked (commit `9a6cca0`: full-height hero waveform, scroll-to-zoom
-anchored at t=0, adaptive oscilloscope-vs-hull, thin envelope overlays). It builds clean +
-ctest 5/5 but is **pending final visual sign-off**. User's next-session requests:
-- **A. Visualizer:** zoom in **further**, make the **transient sample shape** clearly visible,
-  and add a **toggle to turn it on** (dedicated transient/sample-shape view, not just emergent
-  at high zoom). Today's clamp = 2 ms min window + auto-oscilloscope below 2.5 samples/px
-  (`mouseWheelMove` / `paintWave` in `Source/WaveformDisplay.cpp`).
-- **B. Layout:** **bigger knobs, smaller buttons, more space for the waveform** — rebalance
-  `KickAssEditor` (`Source/PluginEditor.cpp`) + knob/button sizing (`Source/KickAssLookAndFeel.cpp`).
-- **C. Sign-off:** confirm oscilloscope zoom level + scroll feel; user floated
-  **double-click → reset to FULL** and a **fit-to-click-length** one-tap zoom.
+### ⭐ ACTIVE FOCUS — items A & B DONE (2026-05-29 late session), now in REVIEW
+The visualizer rework + UI rebalance shipped in the v1.1.0 release. Status of the
+three original requests:
+- **A. Visualizer — DONE** (`433033a`). New **TRANSIENT** tab renders the transient/sample
+  layer in isolation (`KickParams.soloTransient` mutes the body; `offlineRenderTransient()`
+  on the offline engine — RT path untouched), forced oscilloscope + auto-frame to detected
+  transient length, body overlays suppressed. Deeper zoom (`kMinZoomMs` 2 ms → **0.2 ms**),
+  sub-ms axis steps. Files: `Source/WaveformDisplay.{h,cpp}`, `PluginProcessor.{h,cpp}`,
+  `KickEngine.{h,cpp}`.
+- **B. Layout — DONE** (`4482fa2`). `resized()` now pins a slim **56px** footer to the bottom
+  (buttons were ~190px tall), grows the params row to **300px** (bigger knobs — diameter =
+  `min(cellW,cellH)`), and lets the visualizer take the remainder (grows with the window).
+  Default window **1300×880** (was 1280×820), min height 760. `Source/PluginEditor.cpp`.
+- **C. Sign-off — DONE.** Double-click resets WAVE zoom to FULL / re-fits in TRANSIENT view
+  (the "fit-to-click-length" one-tap). Layout sanity-checked via screenshot; **the user's
+  own ears/eyes sign-off now happens through the v1.1.0 review build.**
 
 Full detail: `.paul/HANDOFF-2026-05-29-visualizer-ui.md`.
 
 ### NEXT — pick up here (in priority order)
-1. **Manual-verify the two untested batch-2 features:** drag the **DRAG WAV ↗** footer
+1. **Triage review feedback** from the user + friends on the v1.1.0 build (sound, presets,
+   visualizer/UI, bugs). That feedback drives the v1.1.1 / v1.2 scope — start here.
+2. **Manual-verify the two untested batch-2 features:** drag the **DRAG WAV ↗** footer
    button onto the desktop → confirm a playable WAV lands. (Crash handler is hard to
    exercise on purpose — low priority.)
-2. **Installer — COMPILED ✅.** Inno Setup 6.7.3 is now installed (winget, user-scope at
-   `%LOCALAPPDATA%\Programs\Inno Setup 6`; `build_installer.bat` now finds it there).
-   `scripts\build_installer.bat` produced `installer\Output\KickAss-1.1.0-Setup.exe`
-   (5 MB, ProductVersion 1.1.0, bundles VST3 + Standalone). Version mismatch RESOLVED.
-   **Remaining:** run the `.exe` to test the install + uninstall flow (writes to Program
-   Files / Common Files VST3 — needs an admin prompt; left for a hands-on session).
-3. **Push to `origin`** (`git push origin master`) once the user OKs it — it's been on hold.
-4. **DAW validation matrix** (the long-standing v1.0 open item): load the VST3 in
-   Reaper / Ableton / FL → verify params, state recall, latency, MIDI routing.
-5. **Release:** tag + GitHub Release with `KickAss.vst3` + the installer.
+3. **Installer install/uninstall flow** still untested end-to-end (writes to Program Files /
+   Common Files VST3 — needs an admin prompt). The `.exe` compiles + bundles correctly and
+   is in the release; just confirm a real install→use→uninstall round-trip on a clean-ish box.
+4. **DAW validation matrix** (long-standing v1.0 open item): load the VST3 in
+   Reaper / Ableton / FL / Bitwig → verify params, state recall, latency, MIDI routing.
+   Folding into review feedback is fine.
+5. **Push/release pipeline — DONE for v1.1.0.** For the next cut: bump `CMakeLists.txt`
+   VERSION (+ re-run the `cmake -S . -B build` reconfigure & delete the cached
+   `KickAss_resources.rc` so the EXE version info regenerates), rebuild `KickAss_All`,
+   `scripts\build_installer.bat`, re-zip portable, `gh release create`.
 
 ### Carried-forward limitations (deliberate, documented)
 - Undo does **not** cover freehand breakpoint-curve drags (curve lives in `apvts.state`,
