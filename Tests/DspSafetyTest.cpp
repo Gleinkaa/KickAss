@@ -348,6 +348,48 @@ static void test_safetyLimiter_enforcesCeiling()
 }
 
 //==============================================================================
+// Test 7 — Undo/Redo restores a parameter value (UndoManager wired into APVTS).
+//==============================================================================
+static void test_undoRedo_restoresParameterValue()
+{
+    runHeader ("undo/redo restores parameter value");
+    KickAssProcessor p;
+
+    auto* drive = dynamic_cast<juce::RangedAudioParameter*> (p.apvts.getParameter ("drive"));
+    REQUIRE_MSG (drive != nullptr, "drive parameter missing");
+    if (drive == nullptr) return;
+
+    const float initialNorm = drive->getValue();
+
+    // One discrete edit = one transaction = one undo step.
+    p.getUndoManager().beginNewTransaction();
+
+    // Pick a denormalised value clearly different from the initial one and write it
+    // through getParameterAsValue(). That Value is bound to the parameter's tree
+    // property WITH the UndoManager, so it records an undo step synchronously — the
+    // same path the editor's slider edits take once APVTS flushes to the tree.
+    // (We avoid setValueNotifyingHost here because APVTS only flushes that to the
+    // tree on its message-thread timer, which doesn't run in this headless test.)
+    const auto& range = drive->getNormalisableRange();
+    const float changedPlain = (initialNorm < 0.5f) ? range.convertFrom0to1 (0.9f)
+                                                     : range.convertFrom0to1 (0.1f);
+    // Re-normalise after the snap-to-interval so our reference matches what the
+    // parameter will actually store (drive snaps to a 0.1 grid).
+    const float changedNorm = range.convertTo0to1 (range.snapToLegalValue (changedPlain));
+
+    p.apvts.getParameterAsValue ("drive").setValue (changedPlain);
+    REQUIRE_NEAR (drive->getValue(), changedNorm, 1.0e-3f);
+
+    REQUIRE (p.canUndo());
+    p.undo();
+    REQUIRE_NEAR (drive->getValue(), initialNorm, 1.0e-3f);
+
+    REQUIRE (p.canRedo());
+    p.redo();
+    REQUIRE_NEAR (drive->getValue(), changedNorm, 1.0e-3f);
+}
+
+//==============================================================================
 int main (int, char**)
 {
     juce::MessageManager::getInstance();
@@ -358,6 +400,7 @@ int main (int, char**)
     test_extremeParams_stayFinite();
     test_saturationTypes_distinctFiniteAndDefaultTanh();
     test_safetyLimiter_enforcesCeiling();
+    test_undoRedo_restoresParameterValue();
 
     if (g_failures == 0)
     {

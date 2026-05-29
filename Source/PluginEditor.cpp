@@ -174,8 +174,15 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
     addAndMakeVisible (playBtn);
     addAndMakeVisible (exportBtn);
     addAndMakeVisible (abBtn);
+    addAndMakeVisible (undoBtn);
+    addAndMakeVisible (redoBtn);
     playBtn.onClick   = [this] { triggerPreviewNote(); };
     exportBtn.onClick = [this] { doExportWav(); };
+    undoBtn.onClick   = [this] { doUndo(); };
+    redoBtn.onClick   = [this] { doRedo(); };
+    // Capture keyboard focus so Ctrl+Z / Ctrl+Shift+Z reach keyPressed().
+    setWantsKeyboardFocus (true);
+    updateUndoRedoEnablement();
     abBtn.setButtonText ("A");
     abBtn.onClick = [this]
     {
@@ -506,6 +513,8 @@ void KickAssEditor::parameterChanged (const juce::String& paramID, float /*newVa
             self->syncEnvelopeModeUI();
         if (! self->suppressModificationDetect)
             self->markPresetModified();
+        // Any parameter edit may have pushed/altered the undo stack.
+        self->updateUndoRedoEnablement();
     });
 }
 
@@ -572,6 +581,10 @@ void KickAssEditor::setupKnob (KnobControl& kc, const juce::String& paramId, con
     kc.label.setFont (KickFonts::ui (10.0f));
     kc.label.setColour (juce::Label::textColourId, KickColors::textDim);
 
+    // Undo coalescing: open a fresh transaction when a drag starts so the whole
+    // gesture collapses to a single undo step (not one step per pixel).
+    kc.slider.onDragStart = [this] { processorRef.getUndoManager().beginNewTransaction(); };
+
     kc.attachment.reset (
         new juce::AudioProcessorValueTreeState::SliderAttachment (processorRef.apvts, paramId, kc.slider));
 }
@@ -587,6 +600,10 @@ void KickAssEditor::setupChoice (ChoiceControl& cc, const juce::String& paramId,
     cc.label.setFont (KickFonts::ui (10.0f));
     cc.label.setColour (juce::Label::textColourId, KickColors::textDim);
 
+    // Undo coalescing: a discrete combo pick is its own undo step. The attachment
+    // drives the parameter via its own ComboBox listener; onChange is free for us.
+    cc.combo.onChange = [this] { processorRef.getUndoManager().beginNewTransaction(); };
+
     cc.attachment.reset (
         new juce::AudioProcessorValueTreeState::ComboBoxAttachment (processorRef.apvts, paramId, cc.combo));
 }
@@ -595,8 +612,57 @@ void KickAssEditor::setupToggle (ToggleControl& tc, const juce::String& paramId,
 {
     tc.button.setButtonText (display);
     tc.button.setLookAndFeel (&lnf);
+    // Undo coalescing: each toggle click is its own undo step. The attachment uses
+    // the button's own listener; onClick is free for us to open a transaction.
+    tc.button.onClick = [this] { processorRef.getUndoManager().beginNewTransaction(); };
     tc.attachment.reset (
         new juce::AudioProcessorValueTreeState::ButtonAttachment (processorRef.apvts, paramId, tc.button));
+}
+
+//==============================================================================
+// Undo/Redo
+//==============================================================================
+void KickAssEditor::doUndo()
+{
+    processorRef.undo();
+    // Parameter values are restored by the UndoManager, but the breakpoint curve
+    // lives in apvts.state (NOT as an APVTS param) and is NOT captured by undo.
+    // Re-derive it from the restored state so the curve view + DSP stay consistent.
+    processorRef.restoreVolCurveFromStateOrAhdsr();
+    updateUndoRedoEnablement();
+    repaint();
+}
+
+void KickAssEditor::doRedo()
+{
+    processorRef.redo();
+    processorRef.restoreVolCurveFromStateOrAhdsr();
+    updateUndoRedoEnablement();
+    repaint();
+}
+
+void KickAssEditor::updateUndoRedoEnablement()
+{
+    undoBtn.setEnabled (processorRef.canUndo());
+    redoBtn.setEnabled (processorRef.canRedo());
+}
+
+bool KickAssEditor::keyPressed (const juce::KeyPress& key)
+{
+    const bool ctrl  = key.getModifiers().isCommandDown();   // Ctrl on Win, Cmd on Mac
+    const bool shift = key.getModifiers().isShiftDown();
+
+    if (ctrl && key.isKeyCode ('Z'))
+    {
+        if (shift) doRedo(); else doUndo();
+        return true;
+    }
+    if (ctrl && key.isKeyCode ('Y'))   // Windows-style redo
+    {
+        doRedo();
+        return true;
+    }
+    return false;
 }
 
 //==============================================================================
@@ -827,10 +893,14 @@ void KickAssEditor::resized()
 
     // ---- Footer ----
     // Layout (right → left so sizes are fixed, PLAY KICK gets whatever remains):
-    //   [PLAY KICK ··] [BPM slider 110px] [AUTO 70px] [EXPORT WAV 100px] [A/B 60px]
+    //   [PLAY KICK ··] [BPM 110] [AUTO 70] [EXPORT 100] [A/B 60] [REDO 56] [UNDO 56]
     footerRow.reduce (16, 8);
     const int btnGap = 8;
 
+    redoBtn.setBounds    (footerRow.removeFromRight (56));
+    footerRow.removeFromRight (btnGap);
+    undoBtn.setBounds    (footerRow.removeFromRight (56));
+    footerRow.removeFromRight (btnGap);
     abBtn.setBounds      (footerRow.removeFromRight (60));
     footerRow.removeFromRight (btnGap);
     exportBtn.setBounds  (footerRow.removeFromRight (100));

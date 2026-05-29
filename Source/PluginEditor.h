@@ -55,6 +55,9 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    // Keyboard: Ctrl+Z undo, Ctrl+Shift+Z / Ctrl+Y redo.
+    bool keyPressed (const juce::KeyPress& key) override;
+
     // APVTS::Listener — mirror envelope_mode into AMP knob enable-state
     void parameterChanged (const juce::String& paramID, float newValue) override;
 
@@ -117,6 +120,8 @@ private:
     juce::TextButton autoPlayBtn { "AUTO" };
     juce::TextButton exportBtn  { "EXPORT WAV" };
     juce::TextButton abBtn      { "A/B" };
+    juce::TextButton undoBtn    { "UNDO" };
+    juce::TextButton redoBtn    { "REDO" };
 
     bool autoPlayIsOn = false;
 
@@ -148,6 +153,12 @@ private:
 
     void layoutKnobsInPanel (ParamPanel& panel, const std::vector<KnobControl*>& knobs, int columns);
     void layoutPanelHeader (ParamPanel& panel);
+
+    // Undo/Redo — perform on the processor, then refresh the curve view + DSP and
+    // button enablement (curve lives outside APVTS, so it needs an explicit restore).
+    void doUndo();
+    void doRedo();
+    void updateUndoRedoEnablement();
 
     void triggerPreviewNote();
     void timerCallback() override;   // juce::Timer — Auto Play 4/4 retrigger

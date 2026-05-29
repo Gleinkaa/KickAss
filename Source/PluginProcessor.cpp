@@ -195,7 +195,7 @@ KickAssProcessor::createParameterLayout()
 KickAssProcessor::KickAssProcessor()
     : AudioProcessor (BusesProperties()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts (*this, nullptr, "Parameters", createParameterLayout())
+      apvts (*this, &undoManager, "Parameters", createParameterLayout())
 {
     cacheParamPointers();
     presetManager = std::make_unique<PresetManager> (*this);
@@ -210,6 +210,16 @@ KickAssProcessor::KickAssProcessor()
 }
 
 KickAssProcessor::~KickAssProcessor() = default;
+
+//==============================================================================
+// Undo/Redo — delegate to the UndoManager that apvts now owns.
+// Callers in the editor refresh the breakpoint curve after undo/redo because the
+// curve is stored in apvts.state but NOT as an APVTS parameter, so the
+// UndoManager only restores parameter values, not the <Curves> subtree.
+void KickAssProcessor::undo()           { undoManager.undo(); }
+void KickAssProcessor::redo()           { undoManager.redo(); }
+bool KickAssProcessor::canUndo() const  { return undoManager.canUndo(); }
+bool KickAssProcessor::canRedo() const  { return undoManager.canRedo(); }
 
 void KickAssProcessor::cacheParamPointers()
 {

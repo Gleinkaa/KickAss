@@ -37,7 +37,23 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     //==============================================================================
+    // Undo/Redo. MUST be declared BEFORE apvts so it is constructed first — the
+    // apvts ctor takes &undoManager, so the UndoManager has to already exist.
+    juce::UndoManager undoManager;
+
     juce::AudioProcessorValueTreeState apvts;
+
+    //==============================================================================
+    // Undo/Redo public API. APVTS parameter edits are pushed onto the UndoManager
+    // automatically (it owns one); the editor opens a new transaction per gesture
+    // so one drag = one undo step. NOTE: freehand breakpoint-curve edits live in
+    // apvts.state (NOT as APVTS params) and are NOT captured by the UndoManager —
+    // see restoreVolCurveFromStateOrAhdsr() callers below.
+    juce::UndoManager& getUndoManager() noexcept { return undoManager; }
+    void undo();
+    void redo();
+    bool canUndo() const;
+    bool canRedo() const;
 
     /** UI-thread offline render for the visualizer (Phase 4). */
     void offlineRender (juce::AudioBuffer<float>& buffer, double durationMs);
