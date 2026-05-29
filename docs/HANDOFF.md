@@ -56,6 +56,21 @@ ctest --test-dir build -C Release --output-on-failure         # 5 suites: curve 
 .\build\KickAss_artefacts\Release\Standalone\KickAss.exe      # run standalone
 ```
 
+### ⭐ ACTIVE FOCUS (user's current direction — 2026-05-29 late session)
+The WAVE visualizer was reworked (commit `9a6cca0`: full-height hero waveform, scroll-to-zoom
+anchored at t=0, adaptive oscilloscope-vs-hull, thin envelope overlays). It builds clean +
+ctest 5/5 but is **pending final visual sign-off**. User's next-session requests:
+- **A. Visualizer:** zoom in **further**, make the **transient sample shape** clearly visible,
+  and add a **toggle to turn it on** (dedicated transient/sample-shape view, not just emergent
+  at high zoom). Today's clamp = 2 ms min window + auto-oscilloscope below 2.5 samples/px
+  (`mouseWheelMove` / `paintWave` in `Source/WaveformDisplay.cpp`).
+- **B. Layout:** **bigger knobs, smaller buttons, more space for the waveform** — rebalance
+  `KickAssEditor` (`Source/PluginEditor.cpp`) + knob/button sizing (`Source/KickAssLookAndFeel.cpp`).
+- **C. Sign-off:** confirm oscilloscope zoom level + scroll feel; user floated
+  **double-click → reset to FULL** and a **fit-to-click-length** one-tap zoom.
+
+Full detail: `.paul/HANDOFF-2026-05-29-visualizer-ui.md`.
+
 ### NEXT — pick up here (in priority order)
 1. **Manual-verify the two untested batch-2 features:** drag the **DRAG WAV ↗** footer
    button onto the desktop → confirm a playable WAV lands. (Crash handler is hard to
