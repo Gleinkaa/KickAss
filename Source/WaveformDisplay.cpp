@@ -124,9 +124,37 @@ void WaveformDisplay::resized()
     layoutBreakpointEditor();
 }
 
-void WaveformDisplay::mouseDown (const juce::MouseEvent&)
+juce::Rectangle<int> WaveformDisplay::layoutTabs()
 {
-    // Click anywhere in the canvas = trigger preview (via UI→audio queue)
+    // Three small tabs in the TOP-RIGHT of the header strip. Returns the strip
+    // they live in so paint() can keep the readouts clear of them.
+    constexpr int tabW = 64;
+    constexpr int tabH = 14;
+    constexpr int gap  = 2;
+    auto bounds = getLocalBounds();
+    auto header = bounds.removeFromTop ((int) kHeaderStripPx);
+
+    auto tabsArea = header.removeFromRight (tabW * 3 + gap * 2 + 12).reduced (6, 4);
+    tabBoth     = tabsArea.removeFromRight (tabW);
+    tabsArea.removeFromRight (gap);
+    tabSpectrum = tabsArea.removeFromRight (tabW);
+    tabsArea.removeFromRight (gap);
+    tabWave     = tabsArea.removeFromRight (tabW);
+    juce::ignoreUnused (tabH);
+    return header;
+}
+
+void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
+{
+    // Tab hit-test FIRST. A tab click switches the view and must NOT also trigger
+    // a preview kick (the canvas-click behavior below).
+    layoutTabs();
+    const auto p = e.getPosition();
+    if (tabWave.contains (p))     { viewMode = ViewMode::Wave;     repaint(); return; }
+    if (tabSpectrum.contains (p)) { viewMode = ViewMode::Spectrum; repaint(); return; }
+    if (tabBoth.contains (p))     { viewMode = ViewMode::Both;     repaint(); return; }
+
+    // Click anywhere else in the canvas = trigger preview (via UI→audio queue)
     processor.requestTrigger (60, 1.0f);
 }
 
@@ -172,6 +200,14 @@ void WaveformDisplay::recomputeIfDirty()
     // 2. Audio render via the offline engine (UI thread, safe)
     processor.offlineRender (renderBuf, durationMs);
     renderSampleRate = 48000.0;
+
+    // 2b. Spectrum (cached; recomputed only here, never in paint()).
+    if (renderBuf.getNumSamples() > 0)
+        spectrum = kickass::computeSpectrum (renderBuf.getReadPointer (0),
+                                             renderBuf.getNumSamples(),
+                                             renderSampleRate);
+    else
+        spectrum = {};
 
     // 3. Envelope traces from APVTS params (UI thread, no engine state)
     recomputeEnvelopeTraces();
@@ -317,12 +353,50 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.drawText (juce::String::formatted ("PEAK %+5.1f dBFS    LEN %.0f ms    END %s (%.1f Hz)",
                                           peakDb, durationMs, endNote.toRawUTF8(), endHz),
                 leftReads.toNearestInt(), juce::Justification::centredLeft);
-    g.setColour (accentHot.withAlpha (0.60f));
-    g.setFont (KickFonts::ui (10.0f, true));
-    g.drawText ("WAVE", headerStrip.toNearestInt().reduced (12, 4), juce::Justification::centredRight);
+
+    // ---- View-mode tabs (top-right, clickable; hit-tested in mouseDown) ----
+    layoutTabs();
+    auto drawTab = [&] (juce::Rectangle<int> r, const char* label, ViewMode m)
+    {
+        const bool active = (viewMode == m);
+        g.setColour (active ? accentHot.withAlpha (0.22f) : panelHi.withAlpha (0.55f));
+        g.fillRoundedRectangle (r.toFloat(), 3.0f);
+        g.setColour (active ? accentHot : accentHot.withAlpha (0.30f));
+        g.drawRoundedRectangle (r.toFloat(), 3.0f, 1.0f);
+        g.setColour (active ? accentHot : textDim);
+        g.setFont (KickFonts::ui (9.0f, active));
+        g.drawText (label, r, juce::Justification::centred);
+    };
+    drawTab (tabWave,     "WAVE",     ViewMode::Wave);
+    drawTab (tabSpectrum, "SPECTRUM", ViewMode::Spectrum);
+    drawTab (tabBoth,     "BOTH",     ViewMode::Both);
 
     g.setColour (accentHot.withAlpha (0.15f));
     g.drawHorizontalLine ((int) headerStrip.getBottom(), bounds.getX() + 8.0f, bounds.getRight() - 8.0f);
+
+    // ---- Dispatch by view mode ----
+    if (viewMode == ViewMode::Spectrum)
+    {
+        paintSpectrum (g, bounds.toNearestInt());
+        return;
+    }
+    if (viewMode == ViewMode::Both)
+    {
+        auto top = bounds;
+        auto bottom = top.removeFromBottom (bounds.getHeight() * 0.5f);
+        paintWave (g, top);
+        paintSpectrum (g, bottom.toNearestInt());
+        return;
+    }
+
+    // ViewMode::Wave (default)
+    paintWave (g, bounds);
+}
+
+//==============================================================================
+void WaveformDisplay::paintWave (juce::Graphics& g, juce::Rectangle<float> bounds)
+{
+    using namespace KickColors;
 
     // ---- Plot area (inside the canvas, accounting for axis gutters) ----
     auto plot = bounds.reduced (0, 4);
@@ -555,5 +629,121 @@ void WaveformDisplay::paint (juce::Graphics& g)
             g.setColour (juce::Colours::white.withAlpha (0.85f));
             g.drawVerticalLine ((int) x, plotTop, plotBottom);
         }
+    }
+}
+
+//==============================================================================
+// Spectrum view: log-frequency X (20 Hz..20 kHz), dB Y (0 dB top .. -120 dB
+// bottom), filled curve in the green spectrum accent. Uses the cached
+// SpectrumResult (recomputed only on re-render, never here).
+//==============================================================================
+void WaveformDisplay::paintSpectrum (juce::Graphics& g, juce::Rectangle<int> areaInt)
+{
+    using namespace KickColors;
+
+    auto area = areaInt.toFloat().reduced (0.0f, 4.0f);
+    auto leftAxis   = area.removeFromLeft (kLeftAxisPx);
+    auto bottomAxis = area.removeFromBottom (kBottomAxisPx);
+
+    const float pTop    = area.getY();
+    const float pBottom = area.getBottom();
+    const float pLeft   = area.getX();
+    const float pRight  = area.getRight();
+
+    constexpr float fMin = 20.0f;
+    constexpr float fMax = 20000.0f;
+    constexpr float dbTop = 0.0f;
+    constexpr float dbBot = -120.0f;
+
+    auto xForHz = [&] (float hz) noexcept
+    {
+        hz = juce::jlimit (fMin, fMax, hz);
+        const float t = std::log (hz / fMin) / std::log (fMax / fMin);   // 0..1
+        return juce::jmap (t, 0.0f, 1.0f, pLeft, pRight);
+    };
+    auto yForDb = [&] (float db) noexcept
+    {
+        db = juce::jlimit (dbBot, dbTop, db);
+        return juce::jmap (db, dbTop, dbBot, pTop, pBottom);             // 0 dB top, -120 bottom
+    };
+
+    // ---- Grid: dB horizontals ----
+    g.setColour (textGhost);
+    g.setFont (KickFonts::mono (8.0f));
+    for (float db = 0.0f; db >= -120.0f; db -= 30.0f)
+    {
+        const float y = yForDb (db);
+        g.setColour (gridLine);
+        g.drawHorizontalLine ((int) y, pLeft, pRight);
+        g.setColour (textGhost);
+        g.drawText (juce::String ((int) db), (int) leftAxis.getX(), (int) (y - 6.0f),
+                    (int) leftAxis.getWidth() - 2, 12, juce::Justification::centredRight);
+    }
+
+    // ---- Grid: frequency verticals + labels ----
+    struct FLabel { float hz; const char* txt; };
+    static const FLabel flabels[] = { {20.0f,"20"}, {100.0f,"100"}, {1000.0f,"1k"}, {10000.0f,"10k"} };
+    for (auto& fl : flabels)
+    {
+        const float x = xForHz (fl.hz);
+        g.setColour (gridLine);
+        g.drawVerticalLine ((int) x, pTop, pBottom);
+        g.setColour (textGhost);
+        g.drawText (fl.txt, (int) (x - 14), (int) bottomAxis.getY(),
+                    28, (int) bottomAxis.getHeight(), juce::Justification::centred);
+    }
+
+    // ---- Spectrum curve (filled + stroked) ----
+    if (! spectrum.magsDb.empty() && spectrum.binHz > 0.0)
+    {
+        const int numBins = (int) spectrum.magsDb.size();
+        juce::Path fill, line;
+        bool started = false;
+        float firstX = pLeft, lastX = pLeft;
+
+        // Skip the DC bin (b=0); start at b=1.
+        for (int b = 1; b < numBins; ++b)
+        {
+            const float hz = (float) ((double) b * spectrum.binHz);
+            if (hz < fMin) continue;
+            if (hz > fMax) break;
+
+            const float x = xForHz (hz);
+            const float y = yForDb (spectrum.magsDb[(size_t) b]);
+            if (! started)
+            {
+                line.startNewSubPath (x, y);
+                fill.startNewSubPath (x, pBottom);
+                fill.lineTo (x, y);
+                firstX = x;
+                started = true;
+            }
+            else
+            {
+                line.lineTo (x, y);
+                fill.lineTo (x, y);
+            }
+            lastX = x;
+        }
+
+        if (started)
+        {
+            fill.lineTo (lastX, pBottom);
+            fill.lineTo (firstX, pBottom);
+            fill.closeSubPath();
+
+            // Member `spectrum` (the SpectrumResult) shadows KickColors::spectrum,
+            // so qualify the colour explicitly.
+            g.setColour (KickColors::spectrum.withAlpha (0.22f));
+            g.fillPath (fill);
+            g.setColour (KickColors::spectrum.withAlpha (0.95f));
+            g.strokePath (line, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved));
+        }
+    }
+    else
+    {
+        g.setColour (textGhost);
+        g.setFont (KickFonts::ui (10.0f));
+        g.drawText ("no signal", areaInt, juce::Justification::centred);
     }
 }

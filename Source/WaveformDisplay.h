@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
 #include "BreakpointEditor.h"
+#include "SpectrumUtil.h"
 
 //==============================================================================
 // The big visualizer canvas — the headline feature.
@@ -36,12 +37,25 @@ public:
     // APVTS::Listener
     void parameterChanged (const juce::String& paramID, float newValue) override;
 
+    // Visualizer view modes — default Wave so existing screenshots/behavior are
+    // unchanged until the user clicks a tab.
+    enum class ViewMode { Wave, Spectrum, Both };
+
 private:
     KickAssProcessor& processor;
 
     // Render buffer (mono, last offline kick).
     juce::AudioBuffer<float> renderBuf;
     double renderSampleRate = 48000.0;
+
+    // View mode + cached spectrum (recomputed only on re-render, not every repaint).
+    ViewMode viewMode = ViewMode::Wave;
+    kickass::SpectrumResult spectrum;
+    juce::Rectangle<int> tabWave, tabSpectrum, tabBoth;   // top-right clickable tabs
+
+    void paintWave (juce::Graphics&, juce::Rectangle<float> areaBelowHeader);
+    void paintSpectrum (juce::Graphics&, juce::Rectangle<int> area);
+    juce::Rectangle<int> layoutTabs();                    // computes tab rects, returns the strip used
 
     // Pre-computed envelope traces for paint() (one entry per pixel column).
     std::vector<float> ampEnvTrace;     // 0..1

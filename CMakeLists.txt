@@ -155,10 +155,43 @@ if(KICKASS_BUILD_TESTS)
             juce::juce_recommended_warning_flags
     )
 
+    #--------------------------------------------------------------------------
+    # SpectrumUtil test — exercises the header-only FFT helper (Source/SpectrumUtil.h)
+    # used by the visualizer's spectrum view. GUI-free, depends only on juce_dsp.
+    #   cmake --build build --config Release --target KickAss_SpectrumTests
+    #   build/KickAss_SpectrumTests_artefacts/Release/KickAss_SpectrumTests.exe
+    #--------------------------------------------------------------------------
+    juce_add_console_app(KickAss_SpectrumTests PRODUCT_NAME "KickAss_SpectrumTests")
+
+    target_sources(KickAss_SpectrumTests PRIVATE
+        Tests/SpectrumUtilTest.cpp
+    )
+
+    target_include_directories(KickAss_SpectrumTests PRIVATE Source)
+
+    target_compile_definitions(KickAss_SpectrumTests PRIVATE
+        JucePlugin_Name="KickAss"
+        KICKASS_HEADLESS_TESTS=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+    )
+
+    target_link_libraries(KickAss_SpectrumTests
+        PRIVATE
+            juce::juce_audio_utils
+            juce::juce_audio_formats
+            juce::juce_dsp
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags
+    )
+
     # Convenience: emit a "ctest"-runnable wrapper too.
     enable_testing()
     add_test(NAME curve_roundtrip
              COMMAND $<TARGET_FILE:KickAss_Tests>)
     add_test(NAME dsp_safety
              COMMAND $<TARGET_FILE:KickAss_DspTests>)
+    add_test(NAME spectrum_util
+             COMMAND $<TARGET_FILE:KickAss_SpectrumTests>)
 endif()
