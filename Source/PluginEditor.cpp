@@ -32,8 +32,8 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
 {
     setLookAndFeel (&lnf);
     setResizable (true, true);
-    setResizeLimits (1100, 720, 1920, 1200);
-    setSize (1280, 820);
+    setResizeLimits (1100, 760, 1920, 1280);
+    setSize (1300, 880);
 
     // Attach all panels
     addAndMakeVisible (visualizer);
@@ -863,10 +863,14 @@ void KickAssEditor::resized()
         modifiedDot.setBounds    (presetCombo.getRight() + 2, presetCombo.getY(), 14, presetCombo.getHeight());
     }
 
-    auto vizArea = bounds.removeFromTop (340).reduced (16, 8);
+    // Vertical budget (item B rebalance): slim FIXED footer pinned at the bottom
+    // (previously it absorbed the whole remainder → ~190px-tall buttons), a taller
+    // FIXED params row so the knobs grow, and the visualizer takes everything left
+    // — so the waveform is the biggest element and keeps growing as the window does.
+    auto footerRow = bounds.removeFromBottom (56);      // slim footer (smaller buttons)
+    auto paramsRow = bounds.removeFromBottom (300);     // taller params (bigger knobs)
+    auto vizArea   = bounds.reduced (16, 8);            // remainder → hero waveform
     visualizer.setBounds (vizArea);
-    auto paramsRow = bounds.removeFromTop (224);
-    auto footerRow = bounds;                            // remaining (44 + padding)
 
     // ---- Param row ----
     paramsRow.reduce (16, 8);
