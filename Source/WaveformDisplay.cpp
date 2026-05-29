@@ -158,6 +158,22 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
     processor.requestTrigger (60, 1.0f);
 }
 
+void WaveformDisplay::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w)
+{
+    // Horizontal zoom for transient shaping. Anchored at t=0 (the click/transient
+    // sits at the very start). Wheel up = zoom in (smaller window). No re-render
+    // needed — the cached renderBuf + envelope traces are sampled by time in paint.
+    if (viewMode == ViewMode::Spectrum || durationMs <= 0.0f)
+        return;
+
+    float cur = (viewWindowMs > 0.0f) ? viewWindowMs : durationMs;
+    cur *= (w.deltaY > 0.0f) ? 0.8f : 1.25f;
+    cur = juce::jlimit (2.0f, durationMs, cur);
+    // Snap back to "full" when we reach the whole duration.
+    viewWindowMs = (cur >= durationMs - 0.05f) ? 0.0f : cur;
+    repaint();
+}
+
 //==============================================================================
 juce::String WaveformDisplay::hzToNote (float hz)
 {
@@ -350,9 +366,12 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.setColour (textDim);
     g.setFont (KickFonts::mono (10.0f));
     auto leftReads  = headerStrip.reduced (10, 4);
-    g.drawText (juce::String::formatted ("PEAK %+5.1f dBFS    LEN %.0f ms    END %s (%.1f Hz)",
-                                          peakDb, durationMs, endNote.toRawUTF8(), endHz),
-                leftReads.toNearestInt(), juce::Justification::centredLeft);
+    juce::String reads = juce::String::formatted ("PEAK %+5.1f dBFS    LEN %.0f ms    END %s (%.1f Hz)",
+                                                   peakDb, durationMs, endNote.toRawUTF8(), endHz);
+    if (viewMode != ViewMode::Spectrum)
+        reads << (viewWindowMs > 0.0f ? juce::String::formatted ("    ZOOM %.1f ms", viewWindowMs)
+                                      : juce::String ("    \xe2\x9f\xb2 scroll to zoom"));
+    g.drawText (reads, leftReads.toNearestInt(), juce::Justification::centredLeft);
 
     // ---- View-mode tabs (top-right, clickable; hit-tested in mouseDown) ----
     layoutTabs();
@@ -394,6 +413,11 @@ void WaveformDisplay::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+// WAVE view — the audio waveform is the hero: it fills the WHOLE plot (centered
+// + mirrored) with a center-bright vertical gradient, a soft outer glow, a dense
+// RMS core, and a crisp bright edge. The pitch and amp envelopes are demoted to
+// thin, low-alpha overlay lines so they still inform without competing.
+//==============================================================================
 void WaveformDisplay::paintWave (juce::Graphics& g, juce::Rectangle<float> bounds)
 {
     using namespace KickColors;
@@ -408,221 +432,206 @@ void WaveformDisplay::paintWave (juce::Graphics& g, juce::Rectangle<float> bound
     const float plotLeft   = plot.getX();
     const float plotRight  = plot.getRight();
     const float plotMid    = (plotTop + plotBottom) * 0.5f;
+    const float halfH      = (plotBottom - plotTop) * 0.5f;
+    const float ampH       = halfH * 0.95f;
+    const float plotWf     = plotRight - plotLeft;
 
-    // Top half = pitch (log Y, 20..20k)
-    // Bottom half = amp (linear, -1..+1)
+    // Visible window (zoom anchored at t=0). 0 = full duration.
+    const float winMs = (viewWindowMs > 0.0f) ? juce::jlimit (1.0f, durationMs, viewWindowMs)
+                                              : durationMs;
 
-    // ---- 1. Grid ----
-    g.setColour (gridLine);
-    // Vertical 10 ms minor lines, 50 ms major
-    if (durationMs > 0.0f)
+    auto xForMs = [&] (float ms) noexcept
+    { return plotLeft + (winMs > 0.0f ? (ms / winMs) : 0.0f) * plotWf; };
+    auto yFor   = [&] (float v)  noexcept { return plotMid - ampH * v; };   // +1 → up
+
+    // "Nice" axis step so we get ~4–6 labels regardless of zoom.
+    auto niceStep = [] (float win) noexcept
     {
-        const float pxPerMs = (plotRight - plotLeft) / durationMs;
-        for (float ms = 10.0f; ms < durationMs; ms += 10.0f)
-        {
-            const float x = plotLeft + ms * pxPerMs;
-            const bool isMajor = std::fmod (ms, 50.0f) < 0.5f;
-            g.setColour (isMajor ? gridBeat : gridLine);
-            g.drawVerticalLine ((int) x, plotTop, plotBottom);
-        }
-    }
-    // Horizontal: amp ±1, 0
-    g.setColour (gridBeat);
-    g.drawHorizontalLine ((int) plotMid,             plotLeft, plotRight);   // amp 0 / pitch+amp divider
-    g.setColour (gridLine);
-    g.drawHorizontalLine ((int) (plotMid * 0.5f + plotTop * 0.5f), plotLeft, plotRight);  // pitch mid
-    g.drawHorizontalLine ((int) (plotMid * 0.5f + plotBottom * 0.5f), plotLeft, plotRight);  // amp +/-0.5
+        const float cands[] = { 0.5f, 1, 2, 5, 10, 20, 25, 50, 100, 200, 500 };
+        for (float s : cands) if (win / s <= 6.0f) return s;
+        return 1000.0f;
+    };
+    const float step = (winMs > 0.0f) ? niceStep (winMs) : 50.0f;
 
-    // ---- Left axis labels: pitch Hz (log) ----
+    // ---- 1. Grid (minimal) — time verticals + center & ±0.5 amp lines ----
+    if (winMs > 0.0f)
+    {
+        g.setColour (gridLine);
+        for (float ms = step; ms < winMs; ms += step)
+            g.drawVerticalLine ((int) xForMs (ms), plotTop, plotBottom);
+    }
+    g.setColour (gridLine);
+    g.drawHorizontalLine ((int) (plotMid - halfH * 0.5f), plotLeft, plotRight);   // +0.5
+    g.drawHorizontalLine ((int) (plotMid + halfH * 0.5f), plotLeft, plotRight);   // -0.5
+    g.setColour (gridBeat);
+    g.drawHorizontalLine ((int) plotMid, plotLeft, plotRight);                    // amp 0 axis
+
+    // ---- Left axis: amplitude labels ----
     g.setColour (textGhost);
     g.setFont (KickFonts::mono (8.0f));
-    auto drawHzLabel = [&] (float hz, const char* label) {
-        const float y = logFreqToY (hz, plotTop, plotMid);
-        g.drawText (label, (int) leftAxis.getX(), (int) (y - 6.0f),
-                    (int) leftAxis.getWidth() - 2, 12, juce::Justification::centredRight);
-        g.setColour (gridLine);
-        g.drawHorizontalLine ((int) y, plotLeft, plotRight);
-        g.setColour (textGhost);
-    };
-    drawHzLabel (20.0f,    "20");
-    drawHzLabel (100.0f,   "100");
-    drawHzLabel (1000.0f,  "1k");
-    drawHzLabel (10000.0f, "10k");
-
-    // Amp labels
-    g.drawText ("+1", (int) leftAxis.getX(), (int) (plotMid + 2),
+    g.drawText ("+1", (int) leftAxis.getX(), (int) (plotTop - 1),
                 (int) leftAxis.getWidth() - 2, 12, juce::Justification::centredRight);
-    g.drawText ("-1", (int) leftAxis.getX(), (int) (plotBottom - 12),
+    g.drawText ("0",  (int) leftAxis.getX(), (int) (plotMid - 6.0f),
+                (int) leftAxis.getWidth() - 2, 12, juce::Justification::centredRight);
+    g.drawText ("-1", (int) leftAxis.getX(), (int) (plotBottom - 11),
                 (int) leftAxis.getWidth() - 2, 12, juce::Justification::centredRight);
 
-    // ---- Bottom axis: time ms ----
-    if (durationMs > 0.0f)
+    // ---- Bottom axis: time ms (adaptive step) ----
+    if (winMs > 0.0f)
     {
-        const float pxPerMs = (plotRight - plotLeft) / durationMs;
-        for (float ms = 0.0f; ms <= durationMs; ms += 50.0f)
+        for (float ms = 0.0f; ms <= winMs + 0.01f; ms += step)
         {
-            const float x = plotLeft + ms * pxPerMs;
-            g.drawText (juce::String ((int) ms),
-                        (int) (x - 14), (int) bottomAxis.getY(),
-                        28, (int) bottomAxis.getHeight(),
-                        juce::Justification::centred);
+            const float x = xForMs (ms);
+            const juce::String lbl = (step < 1.0f) ? juce::String (ms, 1) : juce::String ((int) ms);
+            g.drawText (lbl, (int) (x - 16), (int) bottomAxis.getY(),
+                        32, (int) bottomAxis.getHeight(), juce::Justification::centred);
         }
     }
 
-    // ---- 2. Scoop wash (BEFORE envelope so envelope draws on top) ----
-    {
-        const float scStart  = *processor.apvts.getRawParameterValue ("scoop_start");
-        const float scLength = *processor.apvts.getRawParameterValue ("scoop_length");
-        const float scDepth  = *processor.apvts.getRawParameterValue ("scoop_depth");
-        if (scDepth > 0.5f && scLength > 0.0f && durationMs > 0.0f)
-        {
-            const float pxPerMs = (plotRight - plotLeft) / durationMs;
-            const float sx1 = plotLeft + scStart * pxPerMs;
-            const float sx2 = plotLeft + (scStart + scLength) * pxPerMs;
-            g.setColour (envScoop.withAlpha (0.18f));
-            g.fillRect (juce::Rectangle<float> (sx1, plotMid, sx2 - sx1, plotBottom - plotMid));
-        }
-    }
-
-    // ---- 3. Pitch envelope (cyan, log-Y, top half) ----
-    if (! pitchHzTrace.empty())
-    {
-        juce::Path pitchPath;
-        for (size_t i = 0; i < pitchHzTrace.size(); ++i)
-        {
-            const float x = plotLeft + ((float) i / (float) pitchHzTrace.size()) * (plotRight - plotLeft);
-            const float y = logFreqToY (pitchHzTrace[i], plotTop, plotMid);
-            if (i == 0) pitchPath.startNewSubPath (x, y);
-            else        pitchPath.lineTo (x, y);
-        }
-        // Halo glow
-        g.setColour (envPitch.withAlpha (0.18f));
-        g.strokePath (pitchPath, juce::PathStrokeType (5.0f, juce::PathStrokeType::curved));
-        // Crisp line
-        g.setColour (envPitch);
-        g.strokePath (pitchPath, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved));
-    }
-
-    // ---- 4. Waveform (anti-aliased filled hull + RMS underlay, bottom half) ----
-    //
-    // Per pixel column we compute peak (min/max) AND rms over the samples in that
-    // column. The peak hull is drawn as a single juce::Path (top hull L→R, bottom
-    // hull R→L, closed) so the GPU rasteriser anti-aliases the silhouette. RMS is
-    // drawn the same way but darker and underneath, giving the body the "fat" look
-    // you see in TAL-Drum / Punchbox.
-    if (renderBuf.getNumSamples() > 0)
+    // ---- 2. Waveform — the hero. Adaptive: oscilloscope when zoomed in enough to
+    //      resolve individual cycles, mirrored min/max hull when zoomed out. ----
+    if (renderBuf.getNumSamples() > 0 && winMs > 0.0f)
     {
         const int    n = renderBuf.getNumSamples();
         const float* d = renderBuf.getReadPointer (0);
-        const float  halfH = (plotBottom - plotMid) * 0.95f;
-        const int    plotW = juce::jmax (1, (int) std::ceil (plotRight - plotLeft));
-        const float  samplesPerPx = (float) n / (float) plotW;
+        const int    plotW = juce::jmax (1, (int) std::ceil (plotWf));
+        const int    visN  = juce::jlimit (1, n, (int) std::round (winMs * 0.001f * (float) renderSampleRate));
+        const float  samplesPerPx = (float) visN / (float) plotW;
 
-        juce::Path peakHull;
-        juce::Path rmsHull;
-        // Lambda: y for a normalised sample value in [-1..+1] (negative goes up = positive y delta? no — display: +1 → up).
-        auto yFor = [&] (float v) noexcept { return plotMid - halfH * v; };
-
-        // Top hulls L→R
-        bool started = false;
-        for (int px = 0; px < plotW; ++px)
+        if (samplesPerPx < 2.5f)
         {
-            const int start = (int) (px * samplesPerPx);
-            const int stop  = juce::jmin (n, (int) std::ceil ((px + 1) * samplesPerPx));
-            if (start >= stop) continue;
+            // ---- OSCILLOSCOPE: trace the actual samples (modern, shows the wiggle
+            //      — essential for transient shaping). Filled to the center axis. ----
+            juce::Path fill, line;
+            fill.startNewSubPath (plotLeft, plotMid);
+            const int pts = juce::jmax (visN, 2);
+            for (int i = 0; i < pts; ++i)
+            {
+                const float frac = (float) i / (float) (pts - 1);
+                const int   si   = juce::jlimit (0, n - 1, (int) std::round (frac * (float) (visN - 1)));
+                const float x = plotLeft + frac * plotWf;
+                const float y = yFor (d[si]);
+                fill.lineTo (x, y);
+                if (i == 0) line.startNewSubPath (x, y);
+                else        line.lineTo (x, y);
+            }
+            fill.lineTo (plotRight, plotMid);
+            fill.closeSubPath();
 
-            float mn = 1.0f, mx = -1.0f;
-            float sumSq = 0.0f;
-            const int count = stop - start;
-            for (int i = start; i < stop; ++i)
-            {
-                const float s = d[i];
-                if (s < mn) mn = s;
-                if (s > mx) mx = s;
-                sumSq += s * s;
-            }
-            const float rms = std::sqrt (sumSq / (float) count);
+            juce::ColourGradient grad (accentHot.withAlpha (0.06f), plotLeft, plotTop,
+                                       accentHot.withAlpha (0.06f), plotLeft, plotBottom, false);
+            grad.addColour (0.5, accentHot.withAlpha (0.42f));
+            g.setGradientFill (grad);
+            g.fillPath (fill);
 
-            const float x = plotLeft + (float) px;
-            if (! started)
-            {
-                peakHull.startNewSubPath (x, yFor (mx));
-                rmsHull .startNewSubPath (x, yFor (rms));
-                started = true;
-            }
-            else
-            {
-                peakHull.lineTo (x, yFor (mx));
-                rmsHull .lineTo (x, yFor (rms));
-            }
+            g.setColour (accentHot.withAlpha (0.18f));        // glow
+            g.strokePath (line, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved,
+                                                      juce::PathStrokeType::rounded));
+            g.setColour (accentHot.brighter (0.35f));         // crisp trace
+            g.strokePath (line, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved,
+                                                      juce::PathStrokeType::rounded));
         }
-        // Bottom hulls R→L (mirror)
-        for (int px = plotW - 1; px >= 0; --px)
+        else
         {
-            const int start = (int) (px * samplesPerPx);
-            const int stop  = juce::jmin (n, (int) std::ceil ((px + 1) * samplesPerPx));
-            if (start >= stop) continue;
-
-            float mn = 1.0f, mx = -1.0f;
-            float sumSq = 0.0f;
-            const int count = stop - start;
-            for (int i = start; i < stop; ++i)
+            // ---- HULL: per-column min/max mirrored silhouette (zoomed out). ----
+            std::vector<float> colMin ((size_t) plotW, 0.0f), colMax ((size_t) plotW, 0.0f);
+            for (int px = 0; px < plotW; ++px)
             {
-                const float s = d[i];
-                if (s < mn) mn = s;
-                if (s > mx) mx = s;
-                sumSq += s * s;
+                const int start = (int) (px * samplesPerPx);
+                const int stop  = juce::jmin (visN, (int) std::ceil ((px + 1) * samplesPerPx));
+                if (start >= stop) continue;
+                float mn = 1.0f, mx = -1.0f;
+                for (int i = start; i < stop; ++i)
+                {
+                    const float s = d[i];
+                    if (s < mn) mn = s;
+                    if (s > mx) mx = s;
+                }
+                colMin[(size_t) px] = mn;
+                colMax[(size_t) px] = mx;
             }
-            const float rms = std::sqrt (sumSq / (float) count);
 
-            const float x = plotLeft + (float) px;
-            peakHull.lineTo (x, yFor (mn));
-            rmsHull .lineTo (x, yFor (-rms));
+            juce::Path peakHull;
+            bool started = false;
+            for (int px = 0; px < plotW; ++px)
+            {
+                const float x = plotLeft + (float) px;
+                if (! started) { peakHull.startNewSubPath (x, yFor (colMax[(size_t) px])); started = true; }
+                else             peakHull.lineTo (x, yFor (colMax[(size_t) px]));
+            }
+            for (int px = plotW - 1; px >= 0; --px)
+                peakHull.lineTo (plotLeft + (float) px, yFor (colMin[(size_t) px]));
+            peakHull.closeSubPath();
+
+            g.setColour (accentHot.withAlpha (0.14f));        // glow
+            g.strokePath (peakHull, juce::PathStrokeType (5.0f, juce::PathStrokeType::curved,
+                                                          juce::PathStrokeType::rounded));
+            juce::ColourGradient grad (accentHot.withAlpha (0.08f), plotLeft, plotTop,
+                                       accentHot.withAlpha (0.08f), plotLeft, plotBottom, false);
+            grad.addColour (0.5, accentHot.withAlpha (0.50f));
+            g.setGradientFill (grad);
+            g.fillPath (peakHull);
+            g.setColour (accentHot.brighter (0.25f).withAlpha (0.95f));  // crisp edge
+            g.strokePath (peakHull, juce::PathStrokeType (1.2f, juce::PathStrokeType::curved));
         }
-        peakHull.closeSubPath();
-        rmsHull .closeSubPath();
-
-        // Peak body (translucent), RMS body (denser), then a crisp 1px outline
-        // around the peak hull for the silhouette edge.
-        g.setColour (accentHot.withAlpha (0.32f));
-        g.fillPath (peakHull);
-        g.setColour (accentHot.withAlpha (0.78f));
-        g.fillPath (rmsHull);
-        g.setColour (accentHot.withAlpha (0.95f));
-        g.strokePath (peakHull, juce::PathStrokeType (1.0f, juce::PathStrokeType::curved));
     }
 
-    // ---- 5. Amp envelope shading + yellow line (bottom half, ABOVE waveform) ----
-    if (! ampEnvTrace.empty())
+    // Overlays sample the (full-duration) traces by TIME so they stay correct when
+    // zoomed. traceFracForX maps a pixel column → index into a per-pixel trace.
+    auto sampleTrace = [&] (const std::vector<float>& tr, float ms) -> float
     {
-        const float halfH = plotBottom - plotMid;
-        juce::Path envFill, envLine;
-        envFill.startNewSubPath (plotLeft, plotMid);
-        for (size_t i = 0; i < ampEnvTrace.size(); ++i)
-        {
-            const float x = plotLeft + ((float) i / (float) ampEnvTrace.size()) * (plotRight - plotLeft);
-            const float y = plotMid - halfH * ampEnvTrace[i] * 0.95f;
-            envFill.lineTo (x, y);
-            if (i == 0) envLine.startNewSubPath (x, y);
-            else        envLine.lineTo (x, y);
-        }
-        envFill.lineTo (plotRight, plotMid);
-        envFill.closeSubPath();
+        if (tr.empty() || durationMs <= 0.0f) return 0.0f;
+        const float f = juce::jlimit (0.0f, 1.0f, ms / durationMs);
+        return tr[(size_t) juce::jlimit (0, (int) tr.size() - 1, (int) (f * (float) tr.size()))];
+    };
+    const int plotWpx = juce::jmax (2, (int) std::ceil (plotWf));
 
-        g.setColour (envAmp.withAlpha (0.15f));
-        g.fillPath (envFill);
-        g.setColour (envAmp);
-        g.strokePath (envLine, juce::PathStrokeType (1.8f, juce::PathStrokeType::curved));
+    // ---- 3. Amp envelope — thin yellow overlay shell (top edge) ----
+    if (! ampEnvTrace.empty() && winMs > 0.0f)
+    {
+        juce::Path envLine;
+        for (int px = 0; px < plotWpx; ++px)
+        {
+            const float ms = (float) px / (float) (plotWpx - 1) * winMs;
+            const float x  = plotLeft + (float) px / (float) (plotWpx - 1) * plotWf;
+            const float y  = plotMid - ampH * sampleTrace (ampEnvTrace, ms);
+            if (px == 0) envLine.startNewSubPath (x, y);
+            else         envLine.lineTo (x, y);
+        }
+        g.setColour (envAmp.withAlpha (0.55f));
+        g.strokePath (envLine, juce::PathStrokeType (1.2f, juce::PathStrokeType::curved));
     }
 
-    // ---- 6. Playhead ----
+    // ---- 4. Pitch envelope — thin cyan overlay across full height (log-Y) ----
+    if (! pitchHzTrace.empty() && winMs > 0.0f)
+    {
+        juce::Path pitchPath;
+        for (int px = 0; px < plotWpx; ++px)
+        {
+            const float ms = (float) px / (float) (plotWpx - 1) * winMs;
+            const float x  = plotLeft + (float) px / (float) (plotWpx - 1) * plotWf;
+            const float y  = logFreqToY (sampleTrace (pitchHzTrace, ms), plotTop, plotBottom);
+            if (px == 0) pitchPath.startNewSubPath (x, y);
+            else         pitchPath.lineTo (x, y);
+        }
+        g.setColour (envPitch.withAlpha (0.10f));
+        g.strokePath (pitchPath, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved));
+        g.setColour (envPitch.withAlpha (0.55f));
+        g.strokePath (pitchPath, juce::PathStrokeType (1.2f, juce::PathStrokeType::curved));
+        g.setColour (envPitch.withAlpha (0.6f));
+        g.setFont (KickFonts::mono (8.0f));
+        g.drawText ("PITCH", (int) (plotRight - 42), (int) (plotTop + 2), 40, 10,
+                    juce::Justification::centredRight);
+    }
+
+    // ---- 5. Playhead ----
     if (processor.getEngine().isActive() || voiceWasActive)
     {
         const int playPos = processor.getEngine().getPlaybackSamplePos();
         const float playMs = (float) playPos / 48.0f;   // approx, since realtime SR may differ
-        if (durationMs > 0.0f && playMs < durationMs)
+        if (winMs > 0.0f && playMs <= winMs)
         {
-            const float x = plotLeft + (playMs / durationMs) * (plotRight - plotLeft);
+            const float x = xForMs (playMs);
             g.setColour (juce::Colours::white.withAlpha (0.10f));
             g.drawVerticalLine ((int) x - 1, plotTop, plotBottom);
             g.drawVerticalLine ((int) x + 1, plotTop, plotBottom);

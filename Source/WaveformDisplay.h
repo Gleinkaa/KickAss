@@ -7,14 +7,14 @@
 
 //==============================================================================
 // The big visualizer canvas — the headline feature.
-// Layers (back to front):
-//   1. Time / freq grid + axis labels
-//   2. Pitch envelope (cyan, log-Y, top half)
-//   3. Scoop wash (purple, where scoop is active)
-//   4. Amp envelope shading (yellow fill + line, bottom half)
-//   5. Waveform (red mirrored vertical bars, bottom half)
-//   6. Playhead (white, ~30 Hz repaint, playhead-rect only)
-//   7. Top header strip: readouts (peak dBFS, duration, end note + Hz)
+// WAVE view layers (back to front):
+//   1. Minimal grid (50 ms verticals + center / ±0.5 amp lines) + axis labels
+//   2. Waveform HERO — full-height mirrored hull: outer glow, center-bright
+//      vertical gradient body, dense RMS core, crisp bright edge (red accent)
+//   3. Amp envelope — thin yellow overlay line (the shell)
+//   4. Pitch envelope — thin cyan overlay line across full height (log-Y) + tag
+//   5. Playhead (white, ~30 Hz repaint)
+//   6. Top header strip: readouts (peak dBFS, duration, end note + Hz)
 //
 // Rendering is pure juce::Graphics (CPU). Re-render is parameter-change driven
 // + 50 ms debounced. A separate ~30 Hz timer redraws ONLY the playhead rect
@@ -33,6 +33,7 @@ public:
     void resized() override;
     void timerCallback() override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
     // APVTS::Listener
     void parameterChanged (const juce::String& paramID, float newValue) override;
@@ -50,6 +51,9 @@ private:
 
     // View mode + cached spectrum (recomputed only on re-render, not every repaint).
     ViewMode viewMode = ViewMode::Wave;
+    // Horizontal zoom for the WAVE view, anchored at t=0 (transient is at the start).
+    // 0 = full duration; >0 = visible window in ms. Scroll over the canvas to change.
+    float viewWindowMs = 0.0f;
     kickass::SpectrumResult spectrum;
     juce::Rectangle<int> tabWave, tabSpectrum, tabBoth;   // top-right clickable tabs
 
