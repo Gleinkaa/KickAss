@@ -160,6 +160,39 @@ void KickEngine::publishVolCurve (const EnvCurve& src)
 }
 
 //==============================================================================
+// v1.1 — publish a (mono) transient sample into the inactive slot then atomic-flip.
+// Called from UI thread. The buffer copy is the ONLY allocation; the audio thread
+// reads activeSampleIdx with acquire ordering and never allocates.
+//==============================================================================
+void KickEngine::publishTransientSample (const juce::AudioBuffer<float>& monoData, double sourceSampleRate)
+{
+    const int inactive = 1 - activeSampleIdx.load (std::memory_order_relaxed);
+    auto& slot = (inactive == 0) ? sampleSlotA : sampleSlotB;
+
+    const int len = juce::jmax (0, monoData.getNumSamples());
+    slot.setSize (1, juce::jmax (1, len), false, false, true);   // keep at least 1 sample of storage
+    slot.clear();
+    if (len > 0 && monoData.getNumChannels() > 0)
+        slot.copyFrom (0, 0, monoData, 0, 0, len);
+
+    sampleLength[inactive]     = len;
+    sampleSourceRate[inactive] = (sourceSampleRate > 0.0) ? sourceSampleRate : 44100.0;
+
+    activeSampleIdx.store (inactive, std::memory_order_release);
+}
+
+//==============================================================================
+// v1.1 — publish an empty slot (length 0). Same lock-free flip.
+//==============================================================================
+void KickEngine::clearTransientSample()
+{
+    const int inactive = 1 - activeSampleIdx.load (std::memory_order_relaxed);
+    sampleLength[inactive]     = 0;
+    sampleSourceRate[inactive] = 44100.0;
+    activeSampleIdx.store (inactive, std::memory_order_release);
+}
+
+//==============================================================================
 void KickEngine::triggerNote (int midiNote, float vel, int /*sampleOffset*/) noexcept
 {
     // Snapshot a short tail of the previous voice for crossfade-on-retrigger.
@@ -205,6 +238,14 @@ void KickEngine::triggerNote (int midiNote, float vel, int /*sampleOffset*/) noe
     clickPhase = 0.0;
     clickHpfPrevIn = clickHpfPrevOut = 0.0f;
     clickLpfPrev = 0.0f;
+
+    // v1.1: snapshot the active transient-sample slot for the voice lifetime.
+    // Lock-free acquire-load mirrors the LUT snapshot above; the UI thread can
+    // publish a new sample after this point without affecting this voice.
+    voiceSampleIdx    = activeSampleIdx.load (std::memory_order_acquire);
+    voiceSampleLength = sampleLength[voiceSampleIdx];
+    voiceSampleRate   = sampleSourceRate[voiceSampleIdx];
+    samplePlayPos     = 0.0;
 
     // Do NOT reset DC blocker state — it should ringdown naturally and helps mask the click.
 }
@@ -320,28 +361,60 @@ float KickEngine::renderOneDrySample() noexcept
     float sample = osc * ampEnv;
 
     // -------- 5. Transient layer (sum-in) --------
-    if (clickSamplesLeft > 0 && params.clickVol > 0.0f)
+    // clickType 0=Sine 1=Noise 2=Both share the synthesized-click source below.
+    // clickType 3=Sample (v1.1) replaces that source with WAV playback, but reuses
+    // the EXACT same click HPF → LPF → clickVol chain so all four sources share the
+    // transient tone/level controls. The synth click is gated by clickSamplesLeft
+    // (clickDecay window); the sample plays its NATURAL length instead — documented
+    // choice: a dropped sample is meant to be heard in full, scaled by clickVol.
+    const bool sampleMode   = (params.clickType == 3);
+    const bool synthActive  = (! sampleMode) && clickSamplesLeft > 0 && params.clickVol > 0.0f;
+    const bool sampleActive = sampleMode && params.clickVol > 0.0f
+                              && voiceSampleLength > 0
+                              && samplePlayPos < (double) voiceSampleLength;
+
+    if (synthActive || sampleActive)
     {
-        const float clickProgress01 = (float) (clickTotalSamples - clickSamplesLeft)
-                                    / (float) clickTotalSamples;     // 0..1
-        const float clickRem01      = 1.0f - clickProgress01;        // 1..0
-        const float clickFade       = clickRem01 * clickRem01;       // quadratic (matches Python line 386)
-
-        // Sine chirp 10k → 2k
-        const float chirpHz = 10000.0f + (2000.0f - 10000.0f) * clickProgress01;
-        clickPhase += (double) chirpHz / sampleRate;
-        if (clickPhase >= 1.0) clickPhase -= std::floor (clickPhase);
-        const float sineClick = std::sin (kTwoPi * (float) clickPhase) * clickFade;
-
-        // Noise burst, exp decay
-        const float noiseClick = (rng.nextFloat() * 2.0f - 1.0f) * clickFade;
-
         float clickRaw;
-        switch (params.clickType)
+
+        if (sampleActive)
         {
-            case 1:  clickRaw = noiseClick; break;                       // Noise
-            case 2:  clickRaw = 0.5f * (sineClick + noiseClick); break;  // Both
-            default: clickRaw = sineClick; break;                        // Sine (Python default)
+            // SR-correct linear-interpolated read. Step so the sample plays at its
+            // recorded pitch regardless of the engine's current sample rate.
+            const auto& slot = (voiceSampleIdx == 0) ? sampleSlotA : sampleSlotB;
+            const float* data = slot.getReadPointer (0);
+            const int   i0    = (int) samplePlayPos;
+            const int   i1    = juce::jmin (i0 + 1, voiceSampleLength - 1);
+            const float frac  = (float) (samplePlayPos - (double) i0);
+            clickRaw = data[i0] + (data[i1] - data[i0]) * frac;
+
+            const double step = (sampleRate > 0.0) ? (voiceSampleRate / sampleRate) : 1.0;
+            samplePlayPos += step;
+        }
+        else
+        {
+            const float clickProgress01 = (float) (clickTotalSamples - clickSamplesLeft)
+                                        / (float) clickTotalSamples;     // 0..1
+            const float clickRem01      = 1.0f - clickProgress01;        // 1..0
+            const float clickFade       = clickRem01 * clickRem01;       // quadratic (matches Python line 386)
+
+            // Sine chirp 10k → 2k
+            const float chirpHz = 10000.0f + (2000.0f - 10000.0f) * clickProgress01;
+            clickPhase += (double) chirpHz / sampleRate;
+            if (clickPhase >= 1.0) clickPhase -= std::floor (clickPhase);
+            const float sineClick = std::sin (kTwoPi * (float) clickPhase) * clickFade;
+
+            // Noise burst, exp decay
+            const float noiseClick = (rng.nextFloat() * 2.0f - 1.0f) * clickFade;
+
+            switch (params.clickType)
+            {
+                case 1:  clickRaw = noiseClick; break;                       // Noise
+                case 2:  clickRaw = 0.5f * (sineClick + noiseClick); break;  // Both
+                default: clickRaw = sineClick; break;                        // Sine (Python default)
+            }
+
+            --clickSamplesLeft;
         }
 
         // 1-pole HPF — y[n] = a*(y[n-1] + x[n] - x[n-1]),  a = 1/(1+2πfc/fs)
@@ -357,8 +430,10 @@ float KickEngine::renderOneDrySample() noexcept
         clickLpfPrev = clickFinal;
 
         sample += clickFinal * params.clickVol;
-        --clickSamplesLeft;
     }
+    // FALLBACK: clickType==Sample with no sample loaded (voiceSampleLength==0) →
+    // sampleActive is false and the synth branch is skipped → silent transient,
+    // no OOB read, no crash.
 
     // Apply retrigger crossfade — mix in dying tail of previous voice
     if (crossfadeRemaining > 0)

@@ -91,6 +91,9 @@ private:
     // TRANSIENT (5)
     KnobControl   clickVol, clickHpf, clickTone, clickDecay;
     ChoiceControl clickType;
+    // v1.1 drag-a-WAV transient: drop-zone label + clear button.
+    juce::Label      sampleLabel;
+    juce::TextButton sampleClearBtn { "X" };
     // DRIVE (2 knobs + saturation-type selector)
     KnobControl   drive, tailDrive;
     ChoiceControl satType;
@@ -162,6 +165,10 @@ private:
 
     void triggerPreviewNote();
     void timerCallback() override;   // juce::Timer — Auto Play 4/4 retrigger
+
+    // v1.1 — refresh the transient drop-zone label from the processor's stored path.
+    void updateSampleLabel();
+    static bool isAudioFile (const juce::String& path);
 
     // Phase 6b — envelope mode UI sync
     void setEnvelopeMode (bool advanced);          // writes to APVTS via parameter

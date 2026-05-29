@@ -18,6 +18,7 @@
 #include "../Source/PluginProcessor.h"
 #include "../Source/PresetManager.h"
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <iostream>
 #include <cmath>
 
@@ -390,6 +391,144 @@ static void test_undoRedo_restoresParameterValue()
 }
 
 //==============================================================================
+// Test 8 — drag-a-WAV transient layer: loads, plays, persists (path round-trip),
+// and the no-sample fallback stays finite. (v1.1)
+//==============================================================================
+
+// Write a short decaying-sine mono WAV to a temp file; returns the file (or a
+// non-existent File on failure).
+static juce::File writeTempSineWav (int numSamples = 2000, double sr = 44100.0)
+{
+    auto f = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                 .getChildFile ("kickass_transient_test_"
+                                + juce::String (juce::Random::getSystemRandom().nextInt (1'000'000))
+                                + ".wav");
+
+    juce::AudioBuffer<float> buf (1, numSamples);
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float t   = (float) i / (float) sr;
+        const float env = std::exp (-t * 60.0f);                 // fast decay
+        buf.setSample (0, i, std::sin (juce::MathConstants<float>::twoPi * 1000.0f * t) * env);
+    }
+
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::OutputStream> out (f.createOutputStream());
+    if (out == nullptr) return {};
+    out->setPosition (0);
+    if (auto* fos = dynamic_cast<juce::FileOutputStream*> (out.get())) fos->truncate();
+
+    const auto opts = juce::AudioFormatWriterOptions()
+                          .withSampleRate (sr)
+                          .withNumChannels (1)
+                          .withBitsPerSample (16);
+    if (auto writer = wav.createWriterFor (out, opts))
+        writer->writeFromAudioSampleBuffer (buf, 0, numSamples);
+    else
+        return {};   // writer ctor moves out of `out`; on failure file is empty
+
+    return f;
+}
+
+static void test_transientSample_loadsPlaysAndPersists()
+{
+    runHeader ("transient sample — loads, plays, persists, no-sample fallback safe");
+
+    auto tmpWav = writeTempSineWav();
+    REQUIRE_MSG (tmpWav.existsAsFile(), "failed to write temp WAV");
+    if (! tmpWav.existsAsFile()) return;
+
+    auto setP = [] (KickAssProcessor& proc, const char* id, float plainValue)
+    {
+        if (auto* rap = dynamic_cast<juce::RangedAudioParameter*> (proc.apvts.getParameter (id)))
+            rap->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f,
+                rap->getNormalisableRange().convertTo0to1 (plainValue)));
+    };
+
+    // 1. Load the sample.
+    KickAssProcessor p;
+    REQUIRE_MSG (p.loadTransientSampleFile (tmpWav), "loadTransientSampleFile failed");
+
+    // 2. clickType=Sample (idx 3) + clickVol≈1.0, normal body → non-silent + finite,
+    //    and the sample path differs from clickType=Sine.
+    setP (p, "click_vol", 1.0f);
+    setP (p, "envelope_mode", 0.0f);   // Simple AHDSR — stable deterministic body
+
+    auto* clickTypeParam = dynamic_cast<juce::AudioParameterChoice*> (p.apvts.getParameter ("click_type"));
+    REQUIRE_MSG (clickTypeParam != nullptr, "click_type param missing");
+    REQUIRE_MSG (clickTypeParam != nullptr && clickTypeParam->choices.size() == 4,
+                 "click_type should have 4 choices (Sine/Noise/Both/Sample)");
+
+    auto renderWithClickType = [&] (int idx)
+    {
+        if (clickTypeParam != nullptr)
+            clickTypeParam->setValueNotifyingHost (clickTypeParam->convertTo0to1 ((float) idx));
+        juce::AudioBuffer<float> buf;
+        p.offlineRender (buf, 400.0);
+        return buf;
+    };
+
+    auto sampleBuf = renderWithClickType (3);   // Sample
+    const auto sStats = analyse (sampleBuf);
+    REQUIRE_MSG (sStats.allFinite, "sample-mode render non-finite");
+    REQUIRE_MSG (sStats.peak > 1.0e-4f, "sample-mode render silent (peak="
+                                        + juce::String (sStats.peak) + ")");
+
+    auto sineBuf = renderWithClickType (0);     // Sine
+    // Mean-abs difference proves the sample path actually changed the output.
+    {
+        const int n = juce::jmin (sampleBuf.getNumSamples(), sineBuf.getNumSamples());
+        double acc = 0.0;
+        const float* a = sampleBuf.getReadPointer (0);
+        const float* b = sineBuf.getReadPointer (0);
+        for (int i = 0; i < n; ++i) acc += std::abs (a[i] - b[i]);
+        const double diff = acc / juce::jmax (1, n);
+        REQUIRE_MSG (diff > 1.0e-5, "sample path indistinguishable from Sine (diff="
+                                    + juce::String (diff) + ")");
+    }
+
+    // 3. State persistence: <Sample> path node round-trips through get/setState.
+    setP (p, "click_vol", 1.0f);
+    clickTypeParam->setValueNotifyingHost (clickTypeParam->convertTo0to1 (3.0f));
+    REQUIRE_MSG (p.getTransientSamplePath() == tmpWav.getFullPathName(),
+                 "stored path mismatch before round-trip");
+
+    juce::MemoryBlock blob;
+    p.getStateInformation (blob);
+    REQUIRE_MSG (blob.getSize() > 0, "empty state blob");
+
+    KickAssProcessor p2;
+    p2.setStateInformation (blob.getData(), (int) blob.getSize());
+    REQUIRE_MSG (p2.getTransientSamplePath() == tmpWav.getFullPathName(),
+                 "sample path did not round-trip: got '" + p2.getTransientSamplePath() + "'");
+
+    // Restored processor should still render finite, non-silent sample audio.
+    {
+        juce::AudioBuffer<float> buf;
+        p2.offlineRender (buf, 400.0);
+        const auto s = analyse (buf);
+        REQUIRE_MSG (s.allFinite, "restored sample render non-finite");
+        REQUIRE_MSG (s.peak > 1.0e-4f, "restored sample render silent");
+    }
+
+    // 4. Safety: fresh processor, clickType=Sample with NO sample loaded → finite, no crash.
+    {
+        KickAssProcessor p3;
+        setP (p3, "click_vol", 1.0f);
+        setP (p3, "envelope_mode", 0.0f);
+        if (auto* ct = dynamic_cast<juce::AudioParameterChoice*> (p3.apvts.getParameter ("click_type")))
+            ct->setValueNotifyingHost (ct->convertTo0to1 (3.0f));
+        juce::AudioBuffer<float> buf;
+        p3.offlineRender (buf, 400.0);
+        const auto s = analyse (buf);
+        REQUIRE_MSG (s.allFinite, "no-sample fallback produced non-finite output");
+    }
+
+    // 5. Clean up.
+    tmpWav.deleteFile();
+}
+
+//==============================================================================
 int main (int, char**)
 {
     juce::MessageManager::getInstance();
@@ -401,6 +540,7 @@ int main (int, char**)
     test_saturationTypes_distinctFiniteAndDefaultTanh();
     test_safetyLimiter_enforcesCeiling();
     test_undoRedo_restoresParameterValue();
+    test_transientSample_loadsPlaysAndPersists();
 
     if (g_failures == 0)
     {

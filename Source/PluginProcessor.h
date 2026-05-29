@@ -58,6 +58,27 @@ public:
     /** UI-thread offline render for the visualizer (Phase 4). */
     void offlineRender (juce::AudioBuffer<float>& buffer, double durationMs);
 
+    //==============================================================================
+    // v1.1 — drag-a-WAV transient layer.
+    //
+    // loadTransientSampleFile: UI thread. Reads the audio file (any format
+    //   registered by AudioFormatManager — wav/aif/flac/…), sums to mono, and
+    //   publishes it to BOTH the realtime engine and the offline (visualizer)
+    //   engine via their lock-free double-buffer. Stores the file PATH in
+    //   apvts.state under <Sample id="transient" path="..."> for persistence.
+    //   Returns false if the file can't be read.
+    //
+    // Persistence is PATH-BASED only: setStateInformation reloads from the stored
+    //   path if the file is still readable; a missing file leaves the slot empty
+    //   (no crash). Embedding the raw audio in the plugin state is deferred.
+    bool loadTransientSampleFile (const juce::File& file);
+
+    /** UI thread. Clears the sample from both engines and removes the state node. */
+    void clearTransientSample();
+
+    /** Stored transient-sample path ("" if none). Reads apvts.state. */
+    juce::String getTransientSamplePath() const;
+
     /** UI reads this at ~30Hz to draw the playback cursor in the waveform display. */
     int getPlaybackSamplePos() const noexcept { return engine.getPlaybackSamplePos(); }
 

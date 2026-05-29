@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include <juce_audio_formats/juce_audio_formats.h>
 #ifndef KICKASS_HEADLESS_TESTS
  #include "PluginEditor.h"
 #endif
@@ -133,8 +134,9 @@ KickAssProcessor::createParameterLayout()
             .withStringFromValueFunction (
                 [] (float v, int) { return juce::String (juce::roundToInt (v * 100.0f)) + " %"; })));
 
+    // "Sample" appended at index 3 so existing presets/indices (Sine/Noise/Both) are unchanged.
     params.push_back (std::make_unique<ACh> (PID { "click_type", VER }, "Transient · Source",
-        juce::StringArray { "Sine", "Noise", "Both" }, 0));
+        juce::StringArray { "Sine", "Noise", "Both", "Sample" }, 0));
 
     params.push_back (std::make_unique<AF> (PID { "click_hpf", VER }, "Transient · HPF",
         rangeSkewed (200.0f, 4000.0f, 1.0f, 0.30f), 800.0f,
@@ -365,6 +367,20 @@ void KickAssProcessor::setStateInformation (const void* data, int sizeInBytes)
         {
             apvts.replaceState (juce::ValueTree::fromXml (*xml));
             restoreVolCurveFromStateOrAhdsr();
+
+            // v1.1: path-based transient-sample restore. If the stored path is
+            // still readable, reload it; otherwise leave the slot empty (the
+            // <Sample> node is preserved so a later session on the original
+            // machine can still resolve it). Embedding raw audio is deferred.
+            const juce::String samplePath = getTransientSamplePath();
+            if (samplePath.isNotEmpty())
+            {
+                juce::File f (samplePath);
+                if (f.existsAsFile())
+                    loadTransientSampleFile (f);
+                else
+                    clearTransientSample();   // also drops the dead node
+            }
         }
     }
 }
@@ -407,6 +423,73 @@ void KickAssProcessor::offlineRender (juce::AudioBuffer<float>& buffer, double d
     offlineEngine.setParams (p);
     offlineEngine.setCurveMode (isEnvelopeAdvanced());
     offlineEngine.renderOffline (buffer, 48000.0, durationMs);
+}
+
+//==============================================================================
+// v1.1 — drag-a-WAV transient layer (load / clear / persist)
+//==============================================================================
+bool KickAssProcessor::loadTransientSampleFile (const juce::File& file)
+{
+    if (! file.existsAsFile())
+        return false;
+
+    juce::AudioFormatManager fmt;
+    fmt.registerBasicFormats();   // WAV, AIFF, FLAC, Ogg (+ platform codecs)
+
+    std::unique_ptr<juce::AudioFormatReader> reader (fmt.createReaderFor (file));
+    if (reader == nullptr)
+        return false;
+
+    const int    numSamples = (int) reader->lengthInSamples;
+    const int    numCh      = (int) reader->numChannels;
+    const double srcRate    = reader->sampleRate > 0.0 ? reader->sampleRate : 44100.0;
+    if (numSamples <= 0 || numCh <= 0)
+        return false;
+
+    // Read into a multi-channel buffer, then sum to mono.
+    juce::AudioBuffer<float> raw (numCh, numSamples);
+    if (! reader->read (&raw, 0, numSamples, 0, true, true))
+        return false;
+
+    juce::AudioBuffer<float> mono (1, numSamples);
+    mono.clear();
+    for (int ch = 0; ch < numCh; ++ch)
+        mono.addFrom (0, 0, raw, ch, 0, numSamples);
+    if (numCh > 1)
+        mono.applyGain (1.0f / (float) numCh);   // average so a stereo file isn't 2x louder
+
+    // Publish to both engines (lock-free flip; the copy happens inside publish).
+    engine       .publishTransientSample (mono, srcRate);
+    offlineEngine.publishTransientSample (mono, srcRate);
+
+    // Persist the PATH in apvts.state under <Sample id="transient" path="...">.
+    auto sampleNode = apvts.state.getChildWithName ("Sample");
+    if (! sampleNode.isValid())
+    {
+        sampleNode = juce::ValueTree ("Sample");
+        apvts.state.appendChild (sampleNode, nullptr);
+    }
+    sampleNode.setProperty ("id",   "transient",               nullptr);
+    sampleNode.setProperty ("path", file.getFullPathName(),    nullptr);
+    return true;
+}
+
+void KickAssProcessor::clearTransientSample()
+{
+    engine       .clearTransientSample();
+    offlineEngine.clearTransientSample();
+
+    auto sampleNode = apvts.state.getChildWithName ("Sample");
+    if (sampleNode.isValid())
+        apvts.state.removeChild (sampleNode, nullptr);
+}
+
+juce::String KickAssProcessor::getTransientSamplePath() const
+{
+    auto sampleNode = apvts.state.getChildWithName ("Sample");
+    if (sampleNode.isValid())
+        return sampleNode.getProperty ("path").toString();
+    return {};
 }
 
 //==============================================================================

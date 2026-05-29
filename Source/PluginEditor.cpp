@@ -111,7 +111,7 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
     }
 
     // ---- TRANSIENT ----
-    setupChoice (clickType, "click_type", "Source", { "Sine", "Noise", "Both" });
+    setupChoice (clickType, "click_type", "Source", { "Sine", "Noise", "Both", "Sample" });
     setupKnob (clickVol,   "click_vol",   "Level");
     setupKnob (clickHpf,   "click_hpf",   "HPF");
     setupKnob (clickTone,  "click_tone",  "Tone");
@@ -123,6 +123,22 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
         transientPanel.addAndMakeVisible (k->slider);
         transientPanel.addAndMakeVisible (k->label);
     }
+
+    // v1.1 — drag-a-WAV drop zone inside the TRANSIENT panel.
+    sampleLabel.setJustificationType (juce::Justification::centred);
+    sampleLabel.setFont (KickFonts::ui (10.0f));
+    sampleLabel.setColour (juce::Label::textColourId, KickColors::textDim);
+    sampleLabel.setColour (juce::Label::outlineColourId, KickColors::accentHot.withAlpha (0.25f));
+    transientPanel.addAndMakeVisible (sampleLabel);
+
+    sampleClearBtn.setTooltip ("Clear transient sample");
+    sampleClearBtn.onClick = [this]
+    {
+        processorRef.clearTransientSample();
+        updateSampleLabel();
+    };
+    transientPanel.addAndMakeVisible (sampleClearBtn);
+    updateSampleLabel();
 
     // ---- DRIVE ----
     setupKnob (drive,     "drive",      "Base");
@@ -269,7 +285,10 @@ void KickAssEditor::handlePresetSelection()
     juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<KickAssEditor> (this)]
     {
         if (auto* self = safeThis.getComponent())
+        {
             self->clearPresetModifiedFlag();
+            self->updateSampleLabel();
+        }
     });
 }
 
@@ -412,6 +431,7 @@ void KickAssEditor::doToggleAB()
 
     abSlotIsB = ! abSlotIsB;
     abBtn.setButtonText (abSlotIsB ? "B" : "A");
+    updateSampleLabel();
 }
 
 void KickAssEditor::doCopyAB()
@@ -447,10 +467,19 @@ void KickAssEditor::doLoadPreset()
 }
 
 //==============================================================================
+bool KickAssEditor::isAudioFile (const juce::String& path)
+{
+    return path.endsWithIgnoreCase (".wav")
+        || path.endsWithIgnoreCase (".aif")
+        || path.endsWithIgnoreCase (".aiff")
+        || path.endsWithIgnoreCase (".flac");
+}
+
 bool KickAssEditor::isInterestedInFileDrag (const juce::StringArray& files)
 {
     for (auto& s : files)
-        if (s.endsWithIgnoreCase (".json") || s.endsWithIgnoreCase (".kickpreset"))
+        if (s.endsWithIgnoreCase (".json") || s.endsWithIgnoreCase (".kickpreset")
+            || isAudioFile (s))
             return true;
     return false;
 }
@@ -462,6 +491,8 @@ void KickAssEditor::filesDropped (const juce::StringArray& files, int, int)
     for (auto& s : files)
     {
         juce::File f (s);
+
+        // Branch on extension. JSON / kickpreset → preset load (unchanged).
         if (f.hasFileExtension (".json") || f.hasFileExtension (".kickpreset"))
         {
             suppressModificationDetect = true;
@@ -475,7 +506,35 @@ void KickAssEditor::filesDropped (const juce::StringArray& files, int, int)
             });
             return;   // first match wins
         }
+
+        // Audio file → load as the transient sample and switch Source to "Sample".
+        if (isAudioFile (s))
+        {
+            if (processorRef.loadTransientSampleFile (f))
+            {
+                if (auto* prm = dynamic_cast<juce::RangedAudioParameter*> (
+                        processorRef.apvts.getParameter ("click_type")))
+                {
+                    // click_type is a 4-item choice → "Sample" is index 3.
+                    processorRef.getUndoManager().beginNewTransaction();
+                    prm->setValueNotifyingHost (prm->convertTo0to1 (3.0f));
+                }
+                updateSampleLabel();
+                repaint();
+            }
+            return;   // first match wins
+        }
     }
+}
+
+void KickAssEditor::updateSampleLabel()
+{
+    const juce::String path = processorRef.getTransientSamplePath();
+    if (path.isNotEmpty())
+        sampleLabel.setText (juce::File (path).getFileName(), juce::dontSendNotification);
+    else
+        sampleLabel.setText ("drag WAV...", juce::dontSendNotification);
+    sampleClearBtn.setEnabled (path.isNotEmpty());
 }
 
 void KickAssEditor::fileDragEnter (const juce::StringArray&, int, int)
@@ -629,6 +688,7 @@ void KickAssEditor::doUndo()
     // lives in apvts.state (NOT as an APVTS param) and is NOT captured by undo.
     // Re-derive it from the restored state so the curve view + DSP stay consistent.
     processorRef.restoreVolCurveFromStateOrAhdsr();
+    updateSampleLabel();
     updateUndoRedoEnablement();
     repaint();
 }
@@ -637,6 +697,7 @@ void KickAssEditor::doRedo()
 {
     processorRef.redo();
     processorRef.restoreVolCurveFromStateOrAhdsr();
+    updateSampleLabel();
     updateUndoRedoEnablement();
     repaint();
 }
@@ -854,6 +915,11 @@ void KickAssEditor::resized()
         auto comboRow = inner.removeFromTop (40);
         clickType.label.setBounds (comboRow.removeFromTop (12));
         clickType.combo.setBounds (comboRow.reduced (4, 2));
+        // v1.1 — drop-zone row: filename label + a small clear button on the right.
+        auto sampleRow = inner.removeFromTop (20).reduced (4, 2);
+        sampleClearBtn.setBounds (sampleRow.removeFromRight (18));
+        sampleRow.removeFromRight (4);
+        sampleLabel.setBounds (sampleRow);
         // 2×2 knobs
         std::vector<KnobControl*> tknobs = { &clickVol, &clickHpf, &clickTone, &clickDecay };
         const int colW = (inner.getWidth() - 4) / 2;

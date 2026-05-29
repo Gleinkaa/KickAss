@@ -46,7 +46,7 @@ struct KickParams
 
     // TRANSIENT
     float clickVol     = 0.0f;
-    int   clickType    = 0;       // 0=Sine, 1=Noise, 2=Both
+    int   clickType    = 0;       // 0=Sine, 1=Noise, 2=Both, 3=Sample
     float clickHpfHz   = 800.0f;
     float clickToneHz  = 10000.0f;
     float clickDecayMs = 5.0f;
@@ -104,6 +104,24 @@ public:
     //--------------------------------------------------------------------------
     void publishVolCurve (const EnvCurve& src);
     void setCurveMode (bool useCurve) noexcept { curveModeAtomic.store (useCurve); }
+
+    //--------------------------------------------------------------------------
+    // Drag-a-WAV transient layer (v1.1).
+    //
+    // Same double-buffered RT-safe handoff as publishVolCurve(): the UI thread
+    // copies the (mono) sample into the INACTIVE slot, stores its source rate +
+    // length, then atomically flips the active index with release ordering. The
+    // audio thread snapshots the active index at triggerNote and reads only the
+    // snapshotted slot for the voice lifetime, so a mid-voice UI replacement
+    // never glitches and never races.
+    //
+    // publishTransientSample: UI thread. Copies monoData (1 channel) into the
+    //   inactive slot. Allocation (the AudioBuffer copy) happens HERE, never on
+    //   the audio thread.
+    // clearTransientSample: UI thread. Publishes an empty slot (length 0).
+    //--------------------------------------------------------------------------
+    void publishTransientSample (const juce::AudioBuffer<float>& monoData, double sourceSampleRate);
+    void clearTransientSample();
 
 private:
     //--------------------------------------------------------------------------
@@ -175,4 +193,17 @@ private:
     bool  voiceUseCurve   = false;
     int   voiceLutIdx     = 0;
     float voiceLutTotalMs = 0.0f;
+
+    // ---- v1.1: drag-a-WAV transient sample (double-buffered, mirrors the LUT) ----
+    juce::AudioBuffer<float> sampleSlotA, sampleSlotB;   // mono
+    double            sampleSourceRate[2] { 44100.0, 44100.0 };
+    int               sampleLength[2]     { 0, 0 };
+    std::atomic<int>  activeSampleIdx     { 0 };
+
+    // Voice-lifetime snapshot of the sample slot + a read cursor (fractional, for
+    // SR-correct linear-interpolated playback). All snapshotted at triggerNote.
+    int    voiceSampleIdx    = 0;
+    int    voiceSampleLength  = 0;
+    double voiceSampleRate    = 44100.0;
+    double samplePlayPos      = 0.0;
 };
