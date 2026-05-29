@@ -139,10 +139,12 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
 
     // ---- MASTER ----
     setupToggle (invertPhase, "invert_phase", "Invert Phase");
+    setupToggle (safetyLimit, "safety_limit", "Safety");
     setupKnob (outputGain,  "output_gain",  "Output");
     setupKnob (pitchTrack,  "pitch_track",  "Pitch Track");
     setupKnob (phaseOffset, "phase_offset", "Phase °");
     masterPanel.addAndMakeVisible (invertPhase.button);
+    masterPanel.addAndMakeVisible (safetyLimit.button);
     for (auto* k : { &outputGain, &pitchTrack, &phaseOffset })
     {
         masterPanel.addAndMakeVisible (k->slider);
@@ -808,6 +810,8 @@ void KickAssEditor::resized()
         auto inner = masterPanel.getLocalBounds().reduced (8, 30);
         auto toggleRow = inner.removeFromTop (28);
         invertPhase.button.setBounds (toggleRow.reduced (2));
+        auto safetyRow = inner.removeFromTop (28);
+        safetyLimit.button.setBounds (safetyRow.reduced (2));
         std::vector<KnobControl*> mknobs = { &outputGain, &pitchTrack, &phaseOffset };
         const int rowH = inner.getHeight() / (int) mknobs.size();
         for (size_t i = 0; i < mknobs.size(); ++i)

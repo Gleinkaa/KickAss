@@ -165,6 +165,8 @@ KickAssProcessor::createParameterLayout()
     // ---- MASTER ----
     params.push_back (std::make_unique<AB> (PID { "invert_phase", VER }, "Master · Invert Phase", false));
 
+    params.push_back (std::make_unique<AB> (PID { "safety_limit", VER }, "Master · Safety", true));
+
     params.push_back (std::make_unique<AF> (PID { "output_gain", VER }, "Master · Output",
         juce::NormalisableRange<float> (-24.0f, 6.0f, 0.1f), 0.0f,
         attrs (fmtDb)));
@@ -235,6 +237,7 @@ void KickAssProcessor::cacheParamPointers()
     pTailDrive   = apvts.getRawParameterValue ("tail_drive");
     pSatType     = apvts.getRawParameterValue ("sat_type");
     pInvertPhase = apvts.getRawParameterValue ("invert_phase");
+    pSafetyLimit = apvts.getRawParameterValue ("safety_limit");
     pOutputGain   = apvts.getRawParameterValue ("output_gain");
     pPitchTrack   = apvts.getRawParameterValue ("pitch_track");
     pPhaseOffset  = apvts.getRawParameterValue ("phase_offset");
@@ -268,6 +271,7 @@ void KickAssProcessor::readParamsIntoEngine()
     p.tailDrive    = pTailDrive->load();
     p.saturationType = (int) pSatType->load();
     p.invertPhase  = pInvertPhase->load() > 0.5f;
+    p.safetyLimit  = pSafetyLimit->load() > 0.5f;
     p.outputGainDb = pOutputGain->load();
     p.pitchTrack   = pPitchTrack->load() * 0.01f;   // % → 0..1
     p.phaseOffset  = pPhaseOffset->load() * (1.0f / 360.0f);   // degrees → 0..1
@@ -385,6 +389,7 @@ void KickAssProcessor::offlineRender (juce::AudioBuffer<float>& buffer, double d
     p.tailDrive    = pTailDrive->load();
     p.saturationType = (int) pSatType->load();
     p.invertPhase  = pInvertPhase->load() > 0.5f;
+    p.safetyLimit  = pSafetyLimit->load() > 0.5f;
     p.outputGainDb = pOutputGain->load();
     p.pitchTrack   = 0.0f;   // visualizer always renders at note 60 (no transpose) for stable view
     p.phaseOffset  = pPhaseOffset->load() * (1.0f / 360.0f);   // degrees → 0..1

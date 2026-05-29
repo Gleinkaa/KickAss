@@ -130,6 +130,7 @@ private:
     std::atomic<float>* pSatType      = nullptr;   // choice param backs onto float
     // MASTER
     std::atomic<float>* pInvertPhase  = nullptr;   // bool backs onto float
+    std::atomic<float>* pSafetyLimit  = nullptr;   // bool backs onto float
     std::atomic<float>* pOutputGain   = nullptr;
     std::atomic<float>* pPitchTrack   = nullptr;
     std::atomic<float>* pPhaseOffset  = nullptr;

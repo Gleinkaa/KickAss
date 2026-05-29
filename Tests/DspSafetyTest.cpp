@@ -301,6 +301,53 @@ static void test_saturationTypes_distinctFiniteAndDefaultTanh()
 }
 
 //==============================================================================
+// Test 6 — output safety limiter enforces the -0.1 dBFS ceiling AFTER output gain.
+// Hot drive + +6 dB Output would push peaks over 0 dBFS without the final stage.
+//==============================================================================
+static void test_safetyLimiter_enforcesCeiling()
+{
+    runHeader ("safety limiter — enforces -0.1 dBFS ceiling after output gain");
+    KickAssProcessor p;
+
+    auto setP = [&] (const char* id, float plainValue)
+    {
+        if (auto* rap = dynamic_cast<juce::RangedAudioParameter*> (p.apvts.getParameter (id)))
+            rap->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f,
+                rap->getNormalisableRange().convertTo0to1 (plainValue)));
+    };
+
+    // Hot signal: max drive + max tail drive + +6 dB output, Simple AHDSR body.
+    setP ("drive", 10.0f);
+    setP ("tail_drive", 10.0f);
+    setP ("output_gain", 6.0f);
+    setP ("envelope_mode", 0.0f);
+
+    // Ceiling = 10^(-0.1/20) ≈ 0.98855.
+    const float ceiling = std::pow (10.0f, -0.1f * 0.05f);
+
+    // --- Safety ON (default; set explicitly) ---
+    setP ("safety_limit", 1.0f);
+    juce::AudioBuffer<float> bufOn;
+    p.offlineRender (bufOn, 400.0);
+    const auto sOn = analyse (bufOn);
+    REQUIRE_MSG (sOn.allFinite, "safety ON produced non-finite output");
+    REQUIRE_MSG (sOn.peak <= ceiling + 1.0e-3f,
+                 "safety ON peak exceeds ceiling: " + juce::String (sOn.peak));
+
+    // --- Safety OFF ---
+    setP ("safety_limit", 0.0f);
+    juce::AudioBuffer<float> bufOff;
+    p.offlineRender (bufOff, 400.0);
+    const auto sOff = analyse (bufOff);
+    REQUIRE_MSG (sOff.allFinite, "safety OFF produced non-finite output");
+    // The stage must actually do something: with the limiter off the peak should be
+    // at least as high as when it's on (and, given +6 dB on a hot kick, higher).
+    REQUIRE_MSG (sOff.peak >= sOn.peak,
+                 "safety OFF peak (" + juce::String (sOff.peak)
+                 + ") not >= ON peak (" + juce::String (sOn.peak) + ")");
+}
+
+//==============================================================================
 int main (int, char**)
 {
     juce::MessageManager::getInstance();
@@ -310,6 +357,7 @@ int main (int, char**)
     test_paramFuzz_neverProducesNanOrInf();
     test_extremeParams_stayFinite();
     test_saturationTypes_distinctFiniteAndDefaultTanh();
+    test_safetyLimiter_enforcesCeiling();
 
     if (g_failures == 0)
     {

@@ -457,6 +457,19 @@ void KickEngine::applyPostStages (float* samples, int n) noexcept
         for (int i = 0; i < n; ++i)
             samples[i] *= gain;
     }
+
+    // --- Safety limiter (final stage, AFTER output gain) ---
+    // The -0.3 dBFS soft-clip above is a CHARACTER stage and runs before the
+    // output gain, so a positive Output (e.g. +6 dB) can push the signal back
+    // over 0 dBFS. This defeatable brickwall is the true safety net.
+    // NOTE: this is a SAMPLE-PEAK clamp only — no lookahead / oversampling here,
+    // so we make no true-peak (dBTP) / inter-sample claim in this pass.
+    if (params.safetyLimit)
+    {
+        const float ceilLin = dbToGain (-0.1f);   // -0.1 dBFS ceiling
+        for (int i = 0; i < n; ++i)
+            samples[i] = juce::jlimit (-ceilLin, ceilLin, samples[i]);
+    }
 }
 
 //==============================================================================

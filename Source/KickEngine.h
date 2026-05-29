@@ -58,6 +58,7 @@ struct KickParams
 
     // MASTER
     bool  invertPhase  = false;
+    bool  safetyLimit  = true;    // final brickwall safety clip at -0.1 dBFS (ON by default)
     float outputGainDb = 0.0f;
     float pitchTrack   = 0.0f;    // 0..1 (UI is %)
     float phaseOffset  = 0.0f;    // 0..1 cycle fraction (UI is degrees)

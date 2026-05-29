@@ -93,6 +93,7 @@ private:
     ChoiceControl satType;
     // MASTER (4)
     ToggleControl invertPhase;
+    ToggleControl safetyLimit;
     KnobControl   outputGain, pitchTrack, phaseOffset;
 
     // Header bar
