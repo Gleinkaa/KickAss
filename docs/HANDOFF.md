@@ -11,11 +11,20 @@
 living status; this is the next-session entry point.
 
 ### Where things stand
-- **Branch/commits:** all work is on **`master` @ `d3085d7`**, **11 commits ahead of
-  `origin/master` and UNPUSHED** (user is deliberately holding the push). The
-  `v1.1-sonic-variety` and `v1.1-ship-prep` feature branches were merged
-  (fast-forward) and **deleted** — master is the only branch.
+- **Branch/commits:** all work is on **`master`**, **UNPUSHED** (user is deliberately
+  holding the push). Last *substantive* commit is **`d3085d7`** (Inno installer + STATUS);
+  this handoff refresh sits on top of it (docs-only), so `git log` will show master a
+  commit or two further ahead than the code state — count the ahead number from
+  `git status -sb`, not from here. The `v1.1-sonic-variety` and `v1.1-ship-prep` feature
+  branches were merged (fast-forward) and **deleted** — master is the only branch.
 - **Health:** VST3 + Standalone build **clean**; **`ctest` → 5/5 pass**; working tree clean.
+- **Version:** bumped CMake `project(KickAss VERSION 1.1.0)` (was 0.1.0) so it matches the
+  installer's `1.1.0`. Verified the built Standalone EXE now reports FileVersion/ProductVersion
+  **1.1.0** and `JucePlugin_VersionString="1.1.0"`. **Gotcha:** changing the project VERSION
+  needs a `cmake -S . -B build …` re-configure *and* deleting the cached
+  `build/KickAss_artefacts/JuceLibraryCode/KickAss_resources.rc` before rebuild — otherwise
+  the EXE's Windows file-properties stay stale at the old version (the plugin define updates
+  but the VERSIONINFO resource doesn't regenerate on its own).
 - **v1.0** is functionally complete (Phases 0–8). **v1.1 "Sonic Variety"** added, in two batches:
 
   **Batch 1 — sonic features (merged + ears-on verified by the user 2026-05-29):**
@@ -53,8 +62,8 @@ ctest --test-dir build -C Release --output-on-failure         # 5 suites: curve 
    exercise on purpose — low priority.)
 2. **Compile the installer:** install Inno Setup 6 → run `scripts\build_installer.bat`
    → confirm `installer\Output\KickAss-1.1.0-Setup.exe`. Then test install/uninstall.
-   NOTE version mismatch: installer says `1.1.0`, CMake `project(... VERSION 0.1.0)` —
-   bump the CMake version when you cut the release.
+   (Version mismatch is RESOLVED — CMake is now `1.1.0`, matching the installer.)
+   Inno Setup 6 is still **not installed** on this machine; `iscc.exe` isn't on PATH.
 3. **Push to `origin`** (`git push origin master`) once the user OKs it — it's been on hold.
 4. **DAW validation matrix** (the long-standing v1.0 open item): load the VST3 in
    Reaper / Ableton / FL → verify params, state recall, latency, MIDI routing.
