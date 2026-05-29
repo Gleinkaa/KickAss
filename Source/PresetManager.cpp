@@ -153,6 +153,11 @@ bool PresetManager::applyFactory (int index)
     kv.set ("output_gain",  fp.output_gain);
     kv.set ("pitch_track",  fp.pitch_track);
     applyParameterMap (kv);
+    // Phase 6b: factory presets don't ship breakpoint curves yet — rebuild from
+    // the freshly-applied AHDSR knobs so Advanced-mode users still hear the preset.
+    processor.rebuildVolCurveFromAhdsr();
+    processor.syncVolCurveToValueTree();
+    processor.setVolCurveMode ("ahdsr");   // factory replaces any prior custom curve
     return true;
 }
 
@@ -186,6 +191,9 @@ bool PresetManager::loadKickPreset (const juce::File& file)
         if (xml->hasTagName (processor.apvts.state.getType()))
         {
             processor.apvts.replaceState (juce::ValueTree::fromXml (*xml));
+            // Phase 6b: same restore path as setStateInformation — handles both
+            // new presets (with <Curves>) and old presets (rebuild from AHDSR).
+            processor.restoreVolCurveFromStateOrAhdsr();
             return true;
         }
     }
@@ -220,6 +228,11 @@ bool PresetManager::loadJson (const juce::File& file)
     if (auto* obj = v.getDynamicObject())
     {
         applyParameterMap (obj->getProperties());
+        // Phase 6b: Python JSON has no curve data — rebuild from the AHDSR knobs
+        // we just loaded so Advanced-mode users still hear the JSON preset.
+        processor.rebuildVolCurveFromAhdsr();
+        processor.syncVolCurveToValueTree();
+        processor.setVolCurveMode ("ahdsr");   // JSON has no curve concept
         return true;
     }
     return false;

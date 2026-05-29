@@ -1,6 +1,12 @@
 # KickAss — STATUS
 
-## Current phase: Phase 8 (Polish) in progress — EXPORT WAV + A/B compare + modified-preset indicator + Auto Play 4/4 done (2026-05-28). Next: DAW validation matrix or Phase 6c (pitch breakpoints)
+## Current phase: v1.1 (Sonic Variety) started — DSP regression net + Saturation Type selector landed (2026-05-29). Next: output safety limiter, then spectrum FFT view.
+
+### v1.1 progress (2026-05-29)
+- ✅ **DSP regression net** — `Tests/DspSafetyTest.cpp` (new `KickAss_DspTests` ctest target). Guards: all 16 factory presets render non-silent + finite; full getState/setState round-trip per preset; 200-iteration param fuzz across both envelope modes (no NaN/Inf/absurd peak); degenerate-combo coverage (max drive, zero sweeps/decays, full scoop). This is the net friend-Claude flagged as missing — built BEFORE any DSP change.
+- ✅ **Saturation type selector** — `sat_type` choice param {Tanh, Soft Clip, Hard Clip, Tube, Foldback}. Default = Tanh (index 0) so existing presets are bit-for-bit unchanged. Waveshapers + per-type normalization in `KickEngine::applyPostStages`; UI dropdown in the DRIVE panel; covered by `test_saturationTypes_distinctFiniteAndDefaultTanh`.
+
+## Phase 8 (Polish): EXPORT WAV + A/B compare + modified-preset indicator + Auto Play 4/4 done (2026-05-28). Open: DAW validation matrix.
 
 **Comprehensive smoke-test checklist in [docs/HANDOFF.md](docs/HANDOFF.md). Next session starts there.**
 
@@ -16,7 +22,9 @@
 **Build outputs** (after `cmake --build build --config Release`):
 - `build/KickAss_artefacts/Release/VST3/KickAss.vst3/` — drag into your DAW's VST3 folder, or run `scripts/deploy_vst3.bat` from an elevated shell to copy to `C:\Program Files\Common Files\VST3\`
 - `build/KickAss_artefacts/Release/Standalone/KickAss.exe` — run directly for dev iteration
-- `build/KickAss_Tests_artefacts/Release/KickAss_Tests.exe` — headless test suite (Phase 6b curve round-trip). Run via `ctest -C Release` or directly. 11 tests, ~0.1s total.
+- `build/KickAss_Tests_artefacts/Release/KickAss_Tests.exe` — headless test suite (Phase 6b curve round-trip). 11 tests, ~0.1s total.
+- `build/KickAss_DspTests_artefacts/Release/KickAss_DspTests.exe` — DSP regression net (non-silence / state round-trip / param fuzz / extremes / saturation types). ~1s.
+- Run both at once: `ctest --test-dir build -C Release --output-on-failure`
 
 
 | Phase | Status | Output |

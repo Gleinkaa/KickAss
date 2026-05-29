@@ -60,6 +60,7 @@ target_sources(KickAss PRIVATE
     Source/KickAssLookAndFeel.cpp
     Source/WaveformDisplay.cpp
     Source/PresetManager.cpp
+    Source/BreakpointEditor.cpp
 )
 
 target_include_directories(KickAss PRIVATE Source)
@@ -80,3 +81,84 @@ target_link_libraries(KickAss
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
 )
+
+#==============================================================================
+# Headless tests (Phase 6b #7) — curve save/load round-trip.
+# Build with: cmake --build build --config Release --target KickAss_Tests
+# Run:        build/KickAss_Tests_artefacts/Release/KickAss_Tests.exe
+#==============================================================================
+option(KICKASS_BUILD_TESTS "Build headless test executables" ON)
+
+if(KICKASS_BUILD_TESTS)
+    juce_add_console_app(KickAss_Tests PRODUCT_NAME "KickAss_Tests")
+
+    target_sources(KickAss_Tests PRIVATE
+        Tests/CurveRoundtripTest.cpp
+        Source/PluginProcessor.cpp
+        Source/PresetManager.cpp
+        Source/KickEngine.cpp
+    )
+
+    target_include_directories(KickAss_Tests PRIVATE Source)
+
+    target_compile_definitions(KickAss_Tests PRIVATE
+        # The processor uses JucePlugin_Name in getName(); console-app builds
+        # don't get the plugin-glue macros, so define the bare minimum we need.
+        JucePlugin_Name="KickAss"
+        KICKASS_HEADLESS_TESTS=1
+        # Match the plugin's JUCE config so module headers compile identically.
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+    )
+
+    target_link_libraries(KickAss_Tests
+        PRIVATE
+            juce::juce_audio_utils
+            juce::juce_audio_formats
+            juce::juce_dsp
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags
+    )
+
+    #--------------------------------------------------------------------------
+    # DSP regression net — non-silence / state round-trip / param-fuzz / extremes.
+    # Separate console app (its own main()). Build/run:
+    #   cmake --build build --config Release --target KickAss_DspTests
+    #   build/KickAss_DspTests_artefacts/Release/KickAss_DspTests.exe
+    #--------------------------------------------------------------------------
+    juce_add_console_app(KickAss_DspTests PRODUCT_NAME "KickAss_DspTests")
+
+    target_sources(KickAss_DspTests PRIVATE
+        Tests/DspSafetyTest.cpp
+        Source/PluginProcessor.cpp
+        Source/PresetManager.cpp
+        Source/KickEngine.cpp
+    )
+
+    target_include_directories(KickAss_DspTests PRIVATE Source)
+
+    target_compile_definitions(KickAss_DspTests PRIVATE
+        JucePlugin_Name="KickAss"
+        KICKASS_HEADLESS_TESTS=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+    )
+
+    target_link_libraries(KickAss_DspTests
+        PRIVATE
+            juce::juce_audio_utils
+            juce::juce_audio_formats
+            juce::juce_dsp
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags
+    )
+
+    # Convenience: emit a "ctest"-runnable wrapper too.
+    enable_testing()
+    add_test(NAME curve_roundtrip
+             COMMAND $<TARGET_FILE:KickAss_Tests>)
+    add_test(NAME dsp_safety
+             COMMAND $<TARGET_FILE:KickAss_DspTests>)
+endif()

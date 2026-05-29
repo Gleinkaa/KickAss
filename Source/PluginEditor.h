@@ -88,8 +88,9 @@ private:
     // TRANSIENT (5)
     KnobControl   clickVol, clickHpf, clickTone, clickDecay;
     ChoiceControl clickType;
-    // DRIVE (2)
-    KnobControl drive, tailDrive;
+    // DRIVE (2 knobs + saturation-type selector)
+    KnobControl   drive, tailDrive;
+    ChoiceControl satType;
     // MASTER (4)
     ToggleControl invertPhase;
     KnobControl   outputGain, pitchTrack, phaseOffset;

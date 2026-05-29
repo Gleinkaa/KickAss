@@ -1,0 +1,67 @@
+========================================
+ KickAss VST3 — Installation Guide
+========================================
+
+A kick drum synthesizer for psytrance & clinical kick design.
+Author: Gleinkaa | Format: VST3 (Windows x64)
+
+
+WHAT'S IN THE ZIP
+------------------
+  ClickMe_InstallKickAss.bat   ← DOUBLE-CLICK THIS to auto-install (easiest!)
+  KickAss.vst3/                ← The VST3 plugin bundle (this is a FOLDER, not a single file)
+  KickAss.exe                  ← Standalone version (run without a DAW)
+  INSTALL.txt                  ← You're reading it!
+
+
+EASIEST METHOD — One-Click Install
+----------------------------------
+
+1. Unzip everything to a folder.
+2. Right-click ClickMe_InstallKickAss.bat → "Run as administrator"
+3. Done! Restart your DAW and find it under Gleinkaa → KickAss.
+
+If you get a "copy failed" error, make sure you right-click → "Run as administrator".
+
+
+MANUAL VST3 INSTALLATION (if the script doesn't work)
+-----------------------------------------------------
+
+1. Copy the ENTIRE KickAss.vst3 folder to:
+   C:\Program Files\Common Files\VST3\
+
+   So the path ends up as:
+   C:\Program Files\Common Files\VST3\KickAss.vst3\
+
+   (You may need admin permission — just click "Continue" if prompted.)
+
+2. Restart your DAW or rescan plugins.
+
+3. Find it under:  Manufacturer → Gleinkaa  or  Plugin → KickAss
+   Categories: Instrument / Synth / Drum
+
+4. Load it on a MIDI track, send a note in the C1–C2 range, and you should
+   hear a kick immediately.
+
+
+STANDALONE (quick test, no DAW required)
+----------------------------------------
+
+Just double-click KickAss.exe. Click the big "PLAY KICK" button at the
+bottom, or click on the waveform display to trigger a kick.
+
+If no sound comes out, click the gear icon → Audio/MIDI Settings and
+select your audio output device.
+
+
+FACTORY PRESETS
+---------------
+16 presets are built in. Use the dropdown at the top to cycle through
+them — everything from deep sub booms to snappy hi-tech clicks.
+
+
+QUESTIONS / FEEDBACK
+--------------------
+Hit up Gleinkaa. This is a v1.0 pre-release test build — feedback welcome!
+
+========================================

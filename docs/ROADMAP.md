@@ -129,26 +129,56 @@
 
 ---
 
-## v1.1+ backlog (deferred from research)
+## Post-v1.0 — themed releases
 
-Sorted roughly by impact. Promotes to a phase only after v1.0 ships and gets real-world use.
+Restructured 2026-05-29 from a flat 16-item backlog into three themed releases, each with a story.
+Effort numbers are honest (calendar, not optimistic). Test-first: every DSP change lands behind the
+`KickAss_DspTests` regression net.
 
-1. **Separate sub voice with phase-coherent crossover** (`research/01` §4.2, `research/04` §6) — the biggest sonic upgrade. Add `sub_level`, `sub_phase_offset`, `body_level` params.
-2. **Knack / parallel mid-band saturator** (`research/01` §4.6) — the "Bazzism → Projektor" missing ingredient.
-3. **Saturation type enum** {Tanh, SoftClip, HardClip, Tube, Foldback} (`research/01` §4.8).
-4. **Built-in micro-reverb / Space** (`research/01` §1.4).
-5. **Resizable window** with `setResizeLimits(900, 600, 1400, 900)`.
-6. **3D spectrogram strip** below waveform (`research/03` §3.2).
-7. **Per-segment pitch curves** (`curve_1`, `curve_2` instead of shared `pitch_curve`).
-8. **Sample slot for click** — drag-and-drop a `.wav`, becomes the transient layer.
-9. **Transient shaper** (envelope-follower-driven attack/sustain gains) (`research/04` §6).
-10. **MIDI Learn** with right-click context menu integration.
-11. **Tempo-sync display** — "kick ends at sixteenth 3.2 @ 146 BPM" overlay in viz (`research/04` §6).
-12. **Phase-align knob** — 0–20 ms delay to align kick fundamental zero-crossing with bass note (`research/04` §6).
-13. **Bezier envelope editing** — draggable breakpoints (`research/03` §0).
-14. **Modulation matrix / macro morph** between preset snapshots (`research/02` §10).
-15. **macOS build** with AU + VST3 + Standalone, universal binary (x86_64 + arm64). See ARCHITECTURE §8b for portability rules already in force.
-16. **CLAP support** via [clap-juce-extensions](https://github.com/free-audio/clap-juce-extensions) submodule. ~1 day. No source changes — just CMake glue. See ARCHITECTURE §8b.
+### v1.1 — Sonic Variety (~2.5–3 weeks)
+*"Sounds 3× more versatile + finishes v1.0's promise."*
+
+- [x] **DSP regression net** (`Tests/DspSafetyTest.cpp`) — non-silence / state round-trip / param fuzz / extremes. *Done 2026-05-29.*
+- [x] **Saturation type selector** {Tanh, SoftClip, HardClip, Tube, Foldback} (`research/01` §4.8). Default Tanh = v1.0 parity. *Done 2026-05-29.*
+- [ ] **Output safety limiter** — true-peak ceiling at −0.1 dBTP, defeatable. Ship-blocker for ears with 5 sat modes × high drive.
+- [ ] **Spectrum FFT view** (2D, single `[WAVE|SPECTRUM|BOTH]` tab) — finishes the punted Phase 4 spec. Offline buffer already exists; ~80 lines `juce::dsp::FFT`.
+- [ ] **Undo/redo** via `juce::UndoManager` wired to APVTS — cheap, protects breakpoint-editor work.
+- [ ] **Sample-slot transient** — drag a `.wav` onto the transient section (`AudioFormatReader` → buffer playback). KICK 2's killer feature; `clickType` enum + filter chain already there.
+- [ ] **Resizable window** — `setResizeLimits(900, 600, 1400, 900)`. ~10 lines.
+- [ ] **Crash logging** to `%APPDATA%\KickAss\crashes\` via `SystemStats::getStackBacktrace()` — needed to debug beta reports.
+- [ ] **Inno Setup / NSIS installer** — replaces the `.bat` xcopy; registers VST3 path.
+- [ ] **Polarity invert is present; add drag-out WAV** (`DragAndDropContainer`) — drag rendered kick straight into the DAW timeline.
+
+### v1.2 — Deep Sound Design (~3 weeks)
+*"Serum-level envelope + layering control."*
+
+- [ ] **Sub voice with phase-coherent crossover** (`research/01` §4.2, `research/04` §6) — `sub_level`, `sub_phase_offset`, `body_level`. Architectural: re-checks gain staging.
+- [ ] **Knack / parallel mid-band saturator** (`research/01` §4.6) — the "Bazzism → Projektor" missing ingredient.
+- [ ] **Bezier envelope editing** — draggable control-point handles (`research/03` §0). Scope honestly: curve math + hit-testing + persistence bump (ahdsr/linear/bezier) + non-monotonic LUT projection. 1–2 weeks, not an afternoon.
+- [ ] **Per-segment pitch curves** (`curve_1`, `curve_2` instead of shared `pitch_curve`).
+- [ ] **Velocity → drive/pitch-env depth** — makes triggers feel alive.
+- [ ] **Reference-kick FFT overlay** — drop a WAV on the spectrum, see it ghosted behind yours. A/B sound-design killer.
+- [ ] **Preset tagging/filtering** (Hardstyle / Techno / Hi-tech / Sub / Tonal chips).
+
+### v1.3 — Platform + Polish (~3 weeks)
+*"Runs everywhere, controllable everywhere."*
+
+- [ ] **macOS build** — universal binary (arm64 + x86_64), VST3 + AU + Standalone. Budget 2–3 focused days (codesign, notarization, `auval`), NOT an hour. CMake already prepped.
+- [ ] **CLAP support** via [clap-juce-extensions](https://github.com/free-audio/clap-juce-extensions) submodule — CMake glue only (ARCHITECTURE §8b).
+- [ ] **MIDI Learn** — right-click → Learn CC (mostly host-handled today; standalone benefit).
+- [ ] **Phase-align knob** — 0–20 ms delay to align kick fundamental zero-crossing with bass (`research/04` §6).
+- [ ] **Tempo-sync display** — "kick ends at sixteenth 3.2 @ 146 BPM" overlay (`research/04` §6).
+- [ ] **Transient shaper** (envelope-follower attack/sustain gains) (`research/04` §6).
+- [ ] **Micro-reverb / Space** (`research/01` §1.4) — small "Air" knob; pros use a send, so low priority.
+- [ ] **Metering strip** — peak / RMS / short-term LUFS readout.
+- [ ] **Modulation matrix / macro morph** between snapshots (`research/02` §10).
+
+### Cut / parked
+- **3D spectrogram waterfall** — vanity; 2D spectrum is what kick designers actually use. Park until requested.
+
+### Before declaring v1.0 "shipped"
+- [ ] 2-week closed beta with 3–5 producers in real projects.
+- [ ] Performance baseline (e.g. "16 instances < 30% CPU @ 256 buf on Ryzen 5 3600").
 
 ---
 

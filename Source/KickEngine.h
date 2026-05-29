@@ -3,12 +3,16 @@
 #include <juce_dsp/juce_dsp.h>
 #include <atomic>
 #include <memory>
+#include <array>
+#include "EnvCurve.h"
 
 //==============================================================================
 // KickEngine — pure DSP class, owned by value inside KickAssProcessor.
 //
 // Threading contract: prepare/setParams/triggerNote/renderBlock are called from
-// the audio thread. No allocations / no locks / no logging inside renderBlock.
+// the audio thread ONLY. No allocations / no locks / no logging inside renderBlock.
+// UI-thread code must never call triggerNote directly — use KickAssProcessor::requestTrigger()
+// which posts to a lock-free queue drained by processBlock.
 // renderOffline is called from the UI thread and is allowed to allocate.
 //
 // Signal chain (per-sample, see ARCHITECTURE.md §2):
@@ -50,11 +54,13 @@ struct KickParams
     // DRIVE
     float drive        = 1.5f;
     float tailDrive    = 0.0f;
+    int   saturationType = 0;     // 0=Tanh, 1=SoftClip, 2=HardClip, 3=Tube, 4=Foldback
 
     // MASTER
     bool  invertPhase  = false;
     float outputGainDb = 0.0f;
     float pitchTrack   = 0.0f;    // 0..1 (UI is %)
+    float phaseOffset  = 0.0f;    // 0..1 cycle fraction (UI is degrees)
 };
 
 //==============================================================================
@@ -82,6 +88,21 @@ public:
 
     bool isActive() const noexcept { return active.load(); }
     int  getPlaybackSamplePos() const noexcept { return playbackPos.load(); }
+
+    //--------------------------------------------------------------------------
+    // Phase 6b — custom amp envelope via breakpoint curve.
+    //
+    // publishVolCurve: called from UI thread. Fills the inactive LUT slot from
+    // `src`, then atomically flips the active index. Lock-free for the audio
+    // thread. Safe to call as often as the editor wants — typical ≤30 Hz.
+    //
+    // setCurveMode: atomic flag. When false, the engine uses the existing
+    // closed-form AHDSR math (no behavior change vs. pre-6b). When true, it
+    // reads the LUT. Mode is snapshotted at noteOn for the voice lifetime so
+    // a mid-voice toggle never produces a discontinuity.
+    //--------------------------------------------------------------------------
+    void publishVolCurve (const EnvCurve& src);
+    void setCurveMode (bool useCurve) noexcept { curveModeAtomic.store (useCurve); }
 
 private:
     //--------------------------------------------------------------------------
@@ -141,4 +162,16 @@ private:
     // Pre-allocated scratch buffers (renderBlock path)
     std::vector<float> dryScratch;            // size = blockSize
     juce::AudioBuffer<float> overSampledBuf;  // size = blockSize × OSfactor, mono
+
+    // ---- Phase 6b: custom amp envelope LUT (double-buffered) ----
+    std::array<float, EnvCurve::kLutSize> ampLutA {};
+    std::array<float, EnvCurve::kLutSize> ampLutB {};
+    float                                 lutTotalMs[2] { 0.0f, 0.0f };
+    std::atomic<int>                      activeLutIdx { 0 };
+    std::atomic<bool>                     curveModeAtomic { false };
+
+    // Voice-lifetime snapshot of curve state (so mid-voice UI edits don't glitch).
+    bool  voiceUseCurve   = false;
+    int   voiceLutIdx     = 0;
+    float voiceLutTotalMs = 0.0f;
 };

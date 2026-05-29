@@ -23,6 +23,61 @@ namespace
         if (x >= 1.0f) return 1.0f;
         return std::pow (x, p);
     }
+
+    //--------------------------------------------------------------------------
+    // Saturation waveshapers. All take an already-driven input `x` (dry × drive).
+    // Each shapes harmonically differently; the caller normalizes by invNorm so
+    // the loudest part of the kick lands near unity regardless of type.
+    //   Tanh     — smooth, symmetric. The v1.0 character (default, index 0).
+    //   SoftClip — algebraic knee, clean/loud/modern.
+    //   HardClip — square knee, punchy/transient-heavy.
+    //   Tube     — asymmetric (even harmonics), warm/round. DC offset removed by
+    //              the downstream DC blocker.
+    //   Foldback — wavefolder, aggressive/hi-tech/darkpsy.
+    //--------------------------------------------------------------------------
+    enum SatType { Tanh = 0, SoftClip = 1, HardClip = 2, Tube = 3, Foldback = 4 };
+
+    inline float satFoldback (float x) noexcept
+    {
+        // Reflect across ±1 repeatedly. Bounded output in [-1, 1].
+        constexpr float lim = 1.0f;
+        if (x > lim || x < -lim)
+            x = std::fabs (std::fabs (std::fmod (x - lim, 4.0f * lim)) - 2.0f * lim) - lim;
+        return x;
+    }
+
+    inline float saturate (int type, float x) noexcept
+    {
+        switch (type)
+        {
+            case SoftClip:
+            {
+                // Cubic soft clip: unity slope at 0, flat past |x|>=1.
+                const float a = juce::jlimit (-1.0f, 1.0f, x);
+                return 1.5f * a - 0.5f * a * a * a;
+            }
+            case HardClip:
+                return juce::jlimit (-1.0f, 1.0f, x);
+            case Tube:
+                // Asymmetric tanh — squashes the negative half harder → even harmonics.
+                return (x >= 0.0f) ? std::tanh (x)
+                                   : std::tanh (x * 0.7f);
+            case Foldback:
+                return satFoldback (x);
+            case Tanh:
+            default:
+                return std::tanh (x);
+        }
+    }
+
+    // Normalization so a unit-amplitude dry sample at the loudest drive maps to ~±1.
+    // Clamped to a sane band so foldback (whose output can land near 0 at certain
+    // drives) never explodes the gain.
+    inline float saturationInvNorm (int type, float maxDrive) noexcept
+    {
+        const float norm = std::fabs (saturate (type, maxDrive));
+        return juce::jlimit (0.1f, 10.0f, 1.0f / juce::jmax (1.0e-6f, norm));
+    }
 }
 
 //==============================================================================
@@ -92,6 +147,19 @@ int KickEngine::computeTotalSamples() const noexcept
 }
 
 //==============================================================================
+// Phase 6b — publish curve to inactive LUT slot then atomic-flip the index.
+// Called from UI thread. Audio thread reads activeLutIdx with acquire ordering.
+//==============================================================================
+void KickEngine::publishVolCurve (const EnvCurve& src)
+{
+    const int inactive = 1 - activeLutIdx.load (std::memory_order_relaxed);
+    auto& lut = (inactive == 0) ? ampLutA : ampLutB;
+    src.fillLut (lut);
+    lutTotalMs[inactive] = src.getTotalMs();
+    activeLutIdx.store (inactive, std::memory_order_release);
+}
+
+//==============================================================================
 void KickEngine::triggerNote (int midiNote, float vel, int /*sampleOffset*/) noexcept
 {
     // Snapshot a short tail of the previous voice for crossfade-on-retrigger.
@@ -103,11 +171,27 @@ void KickEngine::triggerNote (int midiNote, float vel, int /*sampleOffset*/) noe
         crossfadeRemaining = crossfadeLen;
     }
 
-    // Reset voice state — phase = 0 gives a clean zero-crossing start.
-    phase = 0.0;
+    // Reset voice state. phase=0 is a clean zero-crossing start; user phaseOffset
+    // (0..1 = 0..360°) lets them dial in click vs. boom on the very first sample.
+    phase = (double) juce::jlimit (0.0f, 1.0f, params.phaseOffset);
     sampleSinceTrigger = 0;
-    totalSamples = computeTotalSamples();
     velocity = juce::jlimit (0.0f, 1.0f, vel);
+
+    // Phase 6b: snapshot curve mode + LUT for the voice. Lock-free read of the
+    // atomically-published active index; the UI thread can flip it after this
+    // point and this voice will still use the snapshotted slot for its lifetime.
+    voiceUseCurve   = curveModeAtomic.load (std::memory_order_acquire);
+    voiceLutIdx     = activeLutIdx.load    (std::memory_order_acquire);
+    voiceLutTotalMs = lutTotalMs[voiceLutIdx];
+    if (voiceUseCurve && voiceLutTotalMs <= 0.0f)
+        voiceUseCurve = false;   // empty LUT → safe fallback to AHDSR
+
+    // Voice length: in Advanced mode use the curve's own duration; otherwise the AHDSR knobs.
+    if (voiceUseCurve)
+        totalSamples = juce::jmax (1, (int) std::ceil ((voiceLutTotalMs * 0.001f) * (float) sampleRate));
+    else
+        totalSamples = computeTotalSamples();
+
     active.store (true);
     playbackPos.store (0);
 
@@ -162,44 +246,65 @@ float KickEngine::renderOneDrySample() noexcept
     if (phase >= 1.0) phase -= std::floor (phase);
     const float osc = std::sin (kTwoPi * (float) phase);
 
-    // -------- 3. AHDSR amp envelope (matches BazzismRebuild.py:328-360) --------
-    const float tA  = params.volAttackMs  * 0.001f;
-    const float tH  = params.volHoldMs    * 0.001f;
-    const float tD1 = params.volDecay1Ms  * 0.001f;
-    const float tD2 = params.volDecay2Ms  * 0.001f;
-    const float sus = juce::jlimit (0.0f, 1.0f, params.volSustain);
-    const float vC  = juce::jmax (0.01f, params.volCurve);
-
-    const float p1End = tA;
-    const float p2End = p1End + tH;
-    const float p3End = p2End + tD1;
-    const float p4End = p3End + tD2;
-
+    // -------- 3. Amp envelope: AHDSR closed-form OR LUT lookup (Phase 6b) --------
     float ampEnv = 0.0f;
-    if (t < p1End)
+    float p4End  = 0.0f;   // total envelope duration in seconds — used by scoop + voice-end check
+
+    if (voiceUseCurve)
     {
-        const float x = (tA > 0.0f) ? juce::jlimit (0.0f, 1.0f, t / tA) : 1.0f;
-        ampEnv = safePow01 (x, 1.0f / vC);
-    }
-    else if (t < p2End)
-    {
-        ampEnv = 1.0f;
-    }
-    else if (t < p3End)
-    {
-        const float x = (tD1 > 0.0f) ? juce::jlimit (0.0f, 1.0f, (t - p2End) / tD1) : 1.0f;
-        ampEnv = sus + (1.0f - sus) * safePow01 (1.0f - x, vC);
-    }
-    else if (t < p4End)
-    {
-        const float x = (tD2 > 0.0f) ? juce::jlimit (0.0f, 1.0f, (t - p3End) / tD2) : 1.0f;
-        ampEnv = sus * safePow01 (1.0f - x, vC);
+        // Advanced mode: linear interpolate into the snapshotted LUT.
+        const float totalSec = voiceLutTotalMs * 0.001f;
+        p4End = totalSec;
+        if (totalSec > 0.0f && t < totalSec)
+        {
+            const float pos    = (t / totalSec) * (float) (EnvCurve::kLutSize - 1);
+            const int   idx    = (int) pos;
+            const float frac   = pos - (float) idx;
+            const auto& lut    = (voiceLutIdx == 0) ? ampLutA : ampLutB;
+            const float a0     = lut[(size_t) juce::jlimit (0, EnvCurve::kLutSize - 1, idx)];
+            const float a1     = lut[(size_t) juce::jlimit (0, EnvCurve::kLutSize - 1, idx + 1)];
+            ampEnv = a0 + (a1 - a0) * frac;
+        }
+        else
+        {
+            ampEnv = 0.0f;
+        }
     }
     else
     {
-        ampEnv = 0.0f;
-        // voice has finished — mark inactive on next sample after we return
-        // (so the caller gets one last 0 sample first)
+        // Simple mode: AHDSR closed-form (matches BazzismRebuild.py:328-360).
+        const float tA  = params.volAttackMs  * 0.001f;
+        const float tH  = params.volHoldMs    * 0.001f;
+        const float tD1 = params.volDecay1Ms  * 0.001f;
+        const float tD2 = params.volDecay2Ms  * 0.001f;
+        const float sus = juce::jlimit (0.0f, 1.0f, params.volSustain);
+        const float vC  = juce::jmax (0.01f, params.volCurve);
+
+        const float p1End = tA;
+        const float p2End = p1End + tH;
+        const float p3End = p2End + tD1;
+        p4End             = p3End + tD2;
+
+        if (t < p1End)
+        {
+            const float x = (tA > 0.0f) ? juce::jlimit (0.0f, 1.0f, t / tA) : 1.0f;
+            ampEnv = safePow01 (x, 1.0f / vC);
+        }
+        else if (t < p2End) { ampEnv = 1.0f; }
+        else if (t < p3End)
+        {
+            const float x = (tD1 > 0.0f) ? juce::jlimit (0.0f, 1.0f, (t - p2End) / tD1) : 1.0f;
+            ampEnv = sus + (1.0f - sus) * safePow01 (1.0f - x, vC);
+        }
+        else if (t < p4End)
+        {
+            const float x = (tD2 > 0.0f) ? juce::jlimit (0.0f, 1.0f, (t - p3End) / tD2) : 1.0f;
+            ampEnv = sus * safePow01 (1.0f - x, vC);
+        }
+        else
+        {
+            ampEnv = 0.0f;
+        }
     }
 
     // -------- 4. Scoop (matches BazzismRebuild.py:362-372) --------
@@ -290,7 +395,8 @@ void KickEngine::applyPostStages (float* samples, int n) noexcept
 
     // Estimate max drive over the whole kick lifetime (= at the very end)
     const float maxDrive  = baseDrive + tailDrv * 5.0f;
-    const float invTanhMax = 1.0f / juce::jmax (1e-6f, std::tanh (maxDrive));
+    const int   satType   = params.saturationType;
+    const float invNorm   = saturationInvNorm (satType, maxDrive);
 
     // --- Oversample upward ---
     juce::dsp::AudioBlock<float> inputBlock (&samples, 1, (size_t) n);
@@ -311,7 +417,7 @@ void KickEngine::applyPostStages (float* samples, int n) noexcept
         const float originalSampleIdx = (float) blockStartSample + (float) i / (float) OSfactor;
         const float ramp01 = juce::jlimit (0.0f, 1.0f, originalSampleIdx * invTotal);
         const float drive_t = baseDrive + (ramp01 * ramp01) * tailDrv * 5.0f;
-        osData[i] = std::tanh (osData[i] * drive_t) * invTanhMax;
+        osData[i] = saturate (satType, osData[i] * drive_t) * invNorm;
     }
 
     // --- Oversample downward ---

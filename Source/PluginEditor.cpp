@@ -127,11 +127,15 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
     // ---- DRIVE ----
     setupKnob (drive,     "drive",      "Base");
     setupKnob (tailDrive, "tail_drive", "Tail");
+    setupChoice (satType, "sat_type", "Type",
+                 { "Tanh", "Soft Clip", "Hard Clip", "Tube", "Foldback" });
     for (auto* k : { &drive, &tailDrive })
     {
         drivePanel.addAndMakeVisible (k->slider);
         drivePanel.addAndMakeVisible (k->label);
     }
+    drivePanel.addAndMakeVisible (satType.combo);
+    drivePanel.addAndMakeVisible (satType.label);
 
     // ---- MASTER ----
     setupToggle (invertPhase, "invert_phase", "Invert Phase");
@@ -596,16 +600,14 @@ void KickAssEditor::setupToggle (ToggleControl& tc, const juce::String& paramId,
 //==============================================================================
 void KickAssEditor::triggerPreviewNote()
 {
-    // Programmatic MIDI trigger for the PLAY button. The processor only consumes
-    // MIDI in processBlock — easiest path is to push a note-on into the engine directly.
-    processorRef.getEngine().triggerNote (60, 1.0f, 0);
+    // Queue a note-on for the audio thread. The processor drains this in
+    // processBlock, calling engine.triggerNote() on the correct thread.
+    processorRef.requestTrigger (60, 1.0f);
 }
 
 void KickAssEditor::timerCallback()
 {
     // Auto Play 4/4 — fires every (60000 / bpm) ms on the message thread.
-    // juce::Timer callbacks are always on the message thread, so the engine call
-    // is safe (triggerNote is an atomic flag set).
     triggerPreviewNote();
 }
 
@@ -719,8 +721,9 @@ void KickAssEditor::resized()
     // ---- Param row ----
     paramsRow.reduce (16, 8);
     // 6 panels with widths proportional to knob counts (more knobs = wider)
-    //   PITCH 6, AMP 6, SCOOP 3, TRANSIENT 5, DRIVE 2, MASTER 4   total = 26
-    const int totalKnobs = 6 + 6 + 3 + 5 + 2 + 4;
+    //   PITCH 6, AMP 6, SCOOP 3, TRANSIENT 5, DRIVE 3, MASTER 4   total = 27
+    //   (DRIVE counts as 3 to give the saturation-type combo comfortable width)
+    const int totalKnobs = 6 + 6 + 3 + 5 + 3 + 4;
     const int gap = 8;
     const int availW = paramsRow.getWidth() - 5 * gap;
 
@@ -738,7 +741,7 @@ void KickAssEditor::resized()
     ampPanel.setBounds       (cut (allocate (6)));
     scoopPanel.setBounds     (cut (allocate (3)));
     transientPanel.setBounds (cut (allocate (5)));
-    drivePanel.setBounds     (cut (allocate (2)));
+    drivePanel.setBounds     (cut (allocate (3)));
     masterPanel.setBounds    (paramsRow);   // remainder (MASTER = 4)
 
     // ---- Knob layouts inside each panel ----
@@ -756,7 +759,25 @@ void KickAssEditor::resized()
         modeSimpleBtn  .setBounds (headerStrip.removeFromRight (btnW));
     }
     layoutKnobsInPanel (scoopPanel, { &scoopStart, &scoopLength, &scoopDepth }, 1);
-    layoutKnobsInPanel (drivePanel, { &drive, &tailDrive }, 1);
+
+    // DRIVE: two knobs stacked, saturation-type combo anchored at the bottom.
+    {
+        auto inner = drivePanel.getLocalBounds().reduced (8, 30);
+        auto comboRow = inner.removeFromBottom (40);
+        satType.label.setBounds (comboRow.removeFromTop (12));
+        satType.combo.setBounds (comboRow.reduced (4, 2));
+
+        std::vector<KnobControl*> dknobs = { &drive, &tailDrive };
+        const int rowH = inner.getHeight() / (int) dknobs.size();
+        for (size_t i = 0; i < dknobs.size(); ++i)
+        {
+            auto cell = juce::Rectangle<int> (inner.getX(), inner.getY() + (int) i * rowH,
+                                              inner.getWidth(), rowH).reduced (2);
+            auto labelBox = cell.removeFromBottom (12);
+            dknobs[i]->label.setBounds (labelBox);
+            dknobs[i]->slider.setBounds (cell);
+        }
+    }
 
     // Transient: combo at top, then 4 knobs in 2×2
     {

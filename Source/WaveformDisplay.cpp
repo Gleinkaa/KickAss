@@ -19,10 +19,22 @@ WaveformDisplay::WaveformDisplay (KickAssProcessor& p) : processor (p)
         "vol_attack","vol_hold","vol_decay_1","vol_sustain","vol_decay_2","vol_curve",
         "scoop_start","scoop_length","scoop_depth",
         "click_vol","click_type","click_hpf","click_tone","click_decay",
-        "drive","tail_drive","invert_phase","output_gain"
+        "drive","tail_drive","invert_phase","output_gain",
+        "envelope_mode"     // Phase 6b: mode flip drives editor show/hide + viz rebuild
     };
     for (auto* id : kIds)
         processor.apvts.addParameterListener (id, this);
+
+    addChildComponent (breakpointEditor);          // hidden until Advanced mode
+    breakpointEditor.onCurveCommitted = [this]
+    {
+        // Curve edits don't go through APVTS, so we invalidate manually. Run the
+        // refresh immediately (no debounce) so the yellow trace + red waveform
+        // follow the drag fluidly.
+        dirty.store (true);
+        debounceCountdown = 1;
+    };
+    updateBreakpointEditorVisibility();
 
     startTimerHz (timerHz);
     setOpaque (true);
@@ -35,16 +47,54 @@ WaveformDisplay::~WaveformDisplay()
         "vol_attack","vol_hold","vol_decay_1","vol_sustain","vol_decay_2","vol_curve",
         "scoop_start","scoop_length","scoop_depth",
         "click_vol","click_type","click_hpf","click_tone","click_decay",
-        "drive","tail_drive","invert_phase","output_gain"
+        "drive","tail_drive","invert_phase","output_gain",
+        "envelope_mode"
     };
     for (auto* id : kIds)
         processor.apvts.removeParameterListener (id, this);
 }
 
-void WaveformDisplay::parameterChanged (const juce::String&, float)
+void WaveformDisplay::parameterChanged (const juce::String& id, float)
 {
     dirty.store (true);
     debounceCountdown = debounceTicks;
+    if (id == "envelope_mode")
+    {
+        // Defer to the message thread — parameter listener may be called from audio thread.
+        juce::MessageManager::callAsync ([this] { updateBreakpointEditorVisibility(); });
+    }
+}
+
+void WaveformDisplay::updateBreakpointEditorVisibility()
+{
+    const bool advanced = processor.isEnvelopeAdvanced();
+    breakpointEditor.setVisible (advanced);
+    if (advanced)
+        layoutBreakpointEditor();
+    repaint();
+}
+
+void WaveformDisplay::layoutBreakpointEditor()
+{
+    // Mirror the same geometry the paint() routine uses for the bottom-half plot.
+    constexpr float kHeaderStripPx = 22.0f;
+    constexpr float kLeftAxisPx    = 36.0f;
+    constexpr float kBottomAxisPx  = 14.0f;
+
+    auto bounds = getLocalBounds().toFloat();
+    bounds.removeFromTop (kHeaderStripPx);
+    auto plot = bounds.reduced (0, 4);
+    plot.removeFromLeft   (kLeftAxisPx);
+    plot.removeFromBottom (kBottomAxisPx);
+    const float plotTop    = plot.getY();
+    const float plotBottom = plot.getBottom();
+    const float plotMid    = (plotTop + plotBottom) * 0.5f;
+
+    juce::Rectangle<int> bottomHalf {
+        (int) plot.getX(), (int) plotMid,
+        (int) plot.getWidth(), (int) (plotBottom - plotMid)
+    };
+    breakpointEditor.setBounds (bottomHalf);
 }
 
 void WaveformDisplay::timerCallback()
@@ -71,12 +121,13 @@ void WaveformDisplay::resized()
 {
     dirty.store (true);
     debounceCountdown = 1;   // re-render immediately on resize
+    layoutBreakpointEditor();
 }
 
 void WaveformDisplay::mouseDown (const juce::MouseEvent&)
 {
-    // Click anywhere in the canvas = trigger preview
-    processor.getEngine().triggerNote (60, 1.0f, 0);
+    // Click anywhere in the canvas = trigger preview (via UI→audio queue)
+    processor.requestTrigger (60, 1.0f);
 }
 
 //==============================================================================
@@ -102,12 +153,21 @@ float WaveformDisplay::logFreqToY (float hz, float yTop, float yBottom, float fM
 //==============================================================================
 void WaveformDisplay::recomputeIfDirty()
 {
-    // 1. Read APVTS for envelope timing → total duration in ms
-    const float ta  = *processor.apvts.getRawParameterValue ("vol_attack");
-    const float th  = *processor.apvts.getRawParameterValue ("vol_hold");
-    const float td1 = *processor.apvts.getRawParameterValue ("vol_decay_1");
-    const float td2 = *processor.apvts.getRawParameterValue ("vol_decay_2");
-    durationMs = juce::jmax (minRenderMs, (ta + th + td1 + td2) * renderHeadroomMult);
+    // 1. Total duration in ms — source depends on envelope mode.
+    if (processor.isEnvelopeAdvanced())
+    {
+        juce::SpinLock::ScopedLockType l (processor.getVolCurveLock());
+        const float total = processor.getVolEnvCurve().getTotalMs();
+        durationMs = juce::jmax (minRenderMs, total * renderHeadroomMult);
+    }
+    else
+    {
+        const float ta  = *processor.apvts.getRawParameterValue ("vol_attack");
+        const float th  = *processor.apvts.getRawParameterValue ("vol_hold");
+        const float td1 = *processor.apvts.getRawParameterValue ("vol_decay_1");
+        const float td2 = *processor.apvts.getRawParameterValue ("vol_decay_2");
+        durationMs = juce::jmax (minRenderMs, (ta + th + td1 + td2) * renderHeadroomMult);
+    }
 
     // 2. Audio render via the offline engine (UI thread, safe)
     processor.offlineRender (renderBuf, durationMs);
@@ -160,6 +220,17 @@ void WaveformDisplay::recomputeEnvelopeTraces()
     const float p4End = p3End + tD2;
 
     const float dur = durationMs * 0.001f;
+    const bool  advanced = processor.isEnvelopeAdvanced();
+
+    // In Advanced mode, snapshot the curve's points under the lock once and sample
+    // from the local copy across all pixel columns — avoid holding the spinlock
+    // for the whole pixel loop, and keep per-pixel cost low.
+    EnvCurve curveSnap;
+    if (advanced)
+    {
+        juce::SpinLock::ScopedLockType l (processor.getVolCurveLock());
+        curveSnap = processor.getVolEnvCurve();
+    }
 
     for (int i = 0; i < width; ++i)
     {
@@ -178,9 +249,13 @@ void WaveformDisplay::recomputeEnvelopeTraces()
         }
         pitchHzTrace[(size_t) i] = f;
 
-        // --- Amp envelope (AHDSR) ---
+        // --- Amp envelope: Advanced reads from the curve, Simple computes AHDSR ---
         float a;
-        if (t < p1End) {
+        if (advanced)
+        {
+            a = curveSnap.sampleAtMs (t * 1000.0f);
+        }
+        else if (t < p1End) {
             const float x = (tA > 0.0f) ? juce::jlimit (0.0f, 1.0f, t / tA) : 1.0f;
             a = std::pow (x, 1.0f / vC);
         } else if (t < p2End) {
@@ -195,7 +270,7 @@ void WaveformDisplay::recomputeEnvelopeTraces()
             a = 0.0f;
         }
 
-        // Scoop
+        // Scoop multiplies the amp envelope in BOTH modes — matches DSP path.
         if (scDepth > 0.0f && sLen > 0.0f && t >= sStart && t < sStart + sLen)
         {
             const float sp = (t - sStart) / sLen;
@@ -354,27 +429,93 @@ void WaveformDisplay::paint (juce::Graphics& g)
         g.strokePath (pitchPath, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved));
     }
 
-    // ---- 4. Waveform (red mirrored bars, bottom half) ----
+    // ---- 4. Waveform (anti-aliased filled hull + RMS underlay, bottom half) ----
+    //
+    // Per pixel column we compute peak (min/max) AND rms over the samples in that
+    // column. The peak hull is drawn as a single juce::Path (top hull L→R, bottom
+    // hull R→L, closed) so the GPU rasteriser anti-aliases the silhouette. RMS is
+    // drawn the same way but darker and underneath, giving the body the "fat" look
+    // you see in TAL-Drum / Punchbox.
     if (renderBuf.getNumSamples() > 0)
     {
-        const int   n = renderBuf.getNumSamples();
+        const int    n = renderBuf.getNumSamples();
         const float* d = renderBuf.getReadPointer (0);
-        const float halfH = (plotBottom - plotMid);
-        const int   plotW = juce::jmax (1, (int) (plotRight - plotLeft));
-        const int   samplesPerPx = juce::jmax (1, n / plotW);
+        const float  halfH = (plotBottom - plotMid) * 0.95f;
+        const int    plotW = juce::jmax (1, (int) std::ceil (plotRight - plotLeft));
+        const float  samplesPerPx = (float) n / (float) plotW;
 
-        g.setColour (accentHot.withAlpha (0.85f));
+        juce::Path peakHull;
+        juce::Path rmsHull;
+        // Lambda: y for a normalised sample value in [-1..+1] (negative goes up = positive y delta? no — display: +1 → up).
+        auto yFor = [&] (float v) noexcept { return plotMid - halfH * v; };
+
+        // Top hulls L→R
+        bool started = false;
         for (int px = 0; px < plotW; ++px)
         {
-            const int start = px * samplesPerPx;
-            const int stop  = juce::jmin (n, start + samplesPerPx);
-            if (start >= n) break;
-            float mn =  1.0f, mx = -1.0f;
-            for (int i = start; i < stop; ++i) { mn = juce::jmin (mn, d[i]); mx = juce::jmax (mx, d[i]); }
-            const float y1 = plotMid + halfH * mx * -0.95f;
-            const float y2 = plotMid + halfH * mn * -0.95f;
-            g.drawVerticalLine (plotLeft + px, juce::jmin (y1, y2), juce::jmax (y1, y2));
+            const int start = (int) (px * samplesPerPx);
+            const int stop  = juce::jmin (n, (int) std::ceil ((px + 1) * samplesPerPx));
+            if (start >= stop) continue;
+
+            float mn = 1.0f, mx = -1.0f;
+            float sumSq = 0.0f;
+            const int count = stop - start;
+            for (int i = start; i < stop; ++i)
+            {
+                const float s = d[i];
+                if (s < mn) mn = s;
+                if (s > mx) mx = s;
+                sumSq += s * s;
+            }
+            const float rms = std::sqrt (sumSq / (float) count);
+
+            const float x = plotLeft + (float) px;
+            if (! started)
+            {
+                peakHull.startNewSubPath (x, yFor (mx));
+                rmsHull .startNewSubPath (x, yFor (rms));
+                started = true;
+            }
+            else
+            {
+                peakHull.lineTo (x, yFor (mx));
+                rmsHull .lineTo (x, yFor (rms));
+            }
         }
+        // Bottom hulls R→L (mirror)
+        for (int px = plotW - 1; px >= 0; --px)
+        {
+            const int start = (int) (px * samplesPerPx);
+            const int stop  = juce::jmin (n, (int) std::ceil ((px + 1) * samplesPerPx));
+            if (start >= stop) continue;
+
+            float mn = 1.0f, mx = -1.0f;
+            float sumSq = 0.0f;
+            const int count = stop - start;
+            for (int i = start; i < stop; ++i)
+            {
+                const float s = d[i];
+                if (s < mn) mn = s;
+                if (s > mx) mx = s;
+                sumSq += s * s;
+            }
+            const float rms = std::sqrt (sumSq / (float) count);
+
+            const float x = plotLeft + (float) px;
+            peakHull.lineTo (x, yFor (mn));
+            rmsHull .lineTo (x, yFor (-rms));
+        }
+        peakHull.closeSubPath();
+        rmsHull .closeSubPath();
+
+        // Peak body (translucent), RMS body (denser), then a crisp 1px outline
+        // around the peak hull for the silhouette edge.
+        g.setColour (accentHot.withAlpha (0.32f));
+        g.fillPath (peakHull);
+        g.setColour (accentHot.withAlpha (0.78f));
+        g.fillPath (rmsHull);
+        g.setColour (accentHot.withAlpha (0.95f));
+        g.strokePath (peakHull, juce::PathStrokeType (1.0f, juce::PathStrokeType::curved));
     }
 
     // ---- 5. Amp envelope shading + yellow line (bottom half, ABOVE waveform) ----

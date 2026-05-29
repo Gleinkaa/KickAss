@@ -2,6 +2,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
+#include "BreakpointEditor.h"
 
 //==============================================================================
 // The big visualizer canvas — the headline feature.
@@ -66,10 +67,15 @@ private:
     void recomputeIfDirty();
     void recomputeEnvelopeTraces();
     void recomputeReadouts();
+    void updateBreakpointEditorVisibility();
+    void layoutBreakpointEditor();
 
     // Helpers
     static juce::String hzToNote (float hz);
     static float logFreqToY (float hz, float yTop, float yBottom, float fMin = 20.0f, float fMax = 20000.0f);
+
+    // Phase 6b — overlay editor for Advanced envelope mode.
+    BreakpointEditor breakpointEditor { processor };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WaveformDisplay)
 };
