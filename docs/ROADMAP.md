@@ -142,9 +142,9 @@ Effort numbers are honest (calendar, not optimistic). Test-first: every DSP chan
 - [x] **Saturation type selector** {Tanh, SoftClip, HardClip, Tube, Foldback} (`research/01` §4.8). Default Tanh = v1.0 parity. *Done 2026-05-29.*
 - [x] **Output safety limiter** — sample-peak ceiling at −0.1 dBFS after output gain, defeatable (`safety_limit`, default ON). *Done 2026-05-29. NOTE: sample-peak, not true-peak/dBTP — inter-sample/lookahead deferred.*
 - [x] **Spectrum FFT view** (2D, `[WAVE|SPECTRUM|BOTH]` tabs) — finishes the punted Phase 4 spec. FFT in header-only `SpectrumUtil.h`, headless-tested. *Done 2026-05-29.*
-- [ ] **Undo/redo** via `juce::UndoManager` wired to APVTS — cheap, protects breakpoint-editor work.
-- [ ] **Sample-slot transient** — drag a `.wav` onto the transient section (`AudioFormatReader` → buffer playback). KICK 2's killer feature; `clickType` enum + filter chain already there.
-- [ ] **Resizable window** — `setResizeLimits(900, 600, 1400, 900)`. ~10 lines.
+- [x] **Undo/redo** via `juce::UndoManager` wired to APVTS — buttons + Ctrl+Z/Y. *Done 2026-05-29. NOTE: param-level only; freehand curve edits not yet undoable.*
+- [x] **Sample-slot transient** — drag a WAV onto the transient section; `click_type` "Sample". *Done 2026-05-29. NOTE: path-based persistence (raw-audio embed deferred).*
+- [~] **Resizable window** — `setResizable(true,true)` + limits already present in editor ctor; verify it behaves, then mark done.
 - [ ] **Crash logging** to `%APPDATA%\KickAss\crashes\` via `SystemStats::getStackBacktrace()` — needed to debug beta reports.
 - [ ] **Inno Setup / NSIS installer** — replaces the `.bat` xcopy; registers VST3 path.
 - [ ] **Polarity invert is present; add drag-out WAV** (`DragAndDropContainer`) — drag rendered kick straight into the DAW timeline.

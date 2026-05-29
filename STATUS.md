@@ -1,12 +1,14 @@
 # KickAss — STATUS
 
-## Current phase: v1.1 (Sonic Variety) in progress — regression net + saturation types + safety limiter + spectrum view landed (2026-05-29). Branch: `v1.1-sonic-variety`. Next: undo/redo, sample-slot transient.
+## Current phase: v1.1 (Sonic Variety) in progress — 6 items landed (2026-05-29): regression net, saturation types, safety limiter, spectrum view, undo/redo, sample-slot transient. Branch: `v1.1-sonic-variety` (unmerged). Next: crash logging, installer, drag-out WAV. Verify resizable window (setResizable already present in editor ctor).
 
 ### v1.1 progress (2026-05-29, branch `v1.1-sonic-variety`)
 - ✅ **DSP regression net** — `Tests/DspSafetyTest.cpp` (new `KickAss_DspTests` ctest target). Guards: all 16 factory presets render non-silent + finite; full getState/setState round-trip per preset; 200-iteration param fuzz across both envelope modes (no NaN/Inf/absurd peak); degenerate-combo coverage (max drive, zero sweeps/decays, full scoop). Built BEFORE any DSP change.
 - ✅ **Saturation type selector** — `sat_type` choice {Tanh, Soft Clip, Hard Clip, Tube, Foldback}. Default = Tanh (index 0) so existing presets are bit-for-bit unchanged. Waveshapers + per-type normalization in `KickEngine::applyPostStages`; DRIVE-panel dropdown; test `test_saturationTypes_distinctFiniteAndDefaultTanh`. (commit 846580d)
 - ✅ **Output safety limiter** — `safety_limit` bool (default ON), final clamp at −0.1 dBFS AFTER output gain (closes the gap where +Output dB pushed peaks back over 0 dBFS past the −0.3 dB character soft-clip). Sample-peak only (not true-peak — documented). MASTER-panel toggle; test `test_safetyLimiter_enforcesCeiling`. (commit df35118)
 - ✅ **Spectrum FFT view** — `[WAVE | SPECTRUM | BOTH]` tabs in the visualizer (default WAVE = no visual regression). FFT math in header-only `Source/SpectrumUtil.h` (Hann window, log-freq 20Hz–20kHz, dB axis), tested headlessly via new `KickAss_SpectrumTests` target. (commit 6695846)
+- ✅ **Undo/redo** — `juce::UndoManager` wired into APVTS (3rd ctor arg). UNDO/REDO footer buttons + Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y. One gesture = one transaction (begun on drag-start/onChange/onClick). LIMITATION: freehand breakpoint-curve edits are NOT undoable (curve lives in apvts.state, not an APVTS param); param undo re-syncs the curve via `restoreVolCurveFromStateOrAhdsr()`. Test `test_undoRedo_restoresParameterValue`. (commit 2610b3b)
+- ✅ **Sample-slot transient** — `click_type` extended to {Sine, Noise, Both, **Sample**}. Drag a WAV/AIFF/FLAC onto the transient panel → plays as the click layer through the existing HPF/LPF/clickVol chain. RT-safe double-buffer handoff (mirrors the LUT pattern), SR-correct linear-interp playback, safe no-sample fallback. Persistence is PATH-based in apvts.state `<Sample id="transient">` (embedding raw audio deferred). Test `test_transientSample_loadsPlaysAndPersists`. (commit 56c846e)
 
 ## Phase 8 (Polish): EXPORT WAV + A/B compare + modified-preset indicator + Auto Play 4/4 done (2026-05-28). Open: DAW validation matrix.
 
