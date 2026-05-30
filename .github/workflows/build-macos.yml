@@ -21,7 +21,13 @@ jobs:
         run: cmake -S . -B build -G Xcode -DJUCE_DIR=${{ github.workspace }}/JUCE
 
       - name: Build
-        run: cmake --build build --config Release --target KickAss_All
+        # KickAss_All covers the plugin formats only; the ctest executables are
+        # separate console-app targets, so build them explicitly too.
+        run: >
+          cmake --build build --config Release
+          --target KickAss_All
+          KickAss_Tests KickAss_DspTests KickAss_SpectrumTests
+          KickAss_CrashTests KickAss_RenderTests
 
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
