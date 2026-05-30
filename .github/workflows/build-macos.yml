@@ -1,0 +1,43 @@
+name: build-macos
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  macos:
+    runs-on: macos-14            # Apple Silicon; builds universal arm64+x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout JUCE
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          ref: 8.0.12            # aligned to the local JUCE version (project(JUCE VERSION 8.0.12))
+          path: JUCE
+
+      - name: Configure
+        run: cmake -S . -B build -G Xcode -DJUCE_DIR=${{ github.workspace }}/JUCE
+
+      - name: Build
+        run: cmake --build build --config Release --target KickAss_All
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Stage artifacts
+        run: |
+          set -e
+          OUT="build/KickAss_artefacts/Release"
+          mkdir -p dist
+          cp -R "$OUT/VST3/KickAss.vst3"        dist/
+          cp -R "$OUT/AU/KickAss.component"     dist/
+          cp -R "$OUT/Standalone/KickAss.app"   dist/
+          cd dist && zip -ry KickAss-macOS.zip KickAss.vst3 KickAss.component KickAss.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KickAss-macOS
+          path: dist/KickAss-macOS.zip
+          if-no-files-found: error

@@ -40,8 +40,16 @@ namespace KickFonts
     }
     inline juce::Font mono (float height)
     {
-        // Try a known monospace; if unavailable, JUCE falls back to system mono.
-        return juce::Font (juce::FontOptions ("Consolas", height, juce::Font::plain));
+        // Cross-platform monospace: Consolas ships on Windows, Menlo on macOS.
+        // Anything else falls back to the system default monospaced face.
+       #if JUCE_WINDOWS
+        const juce::String face ("Consolas");
+       #elif JUCE_MAC
+        const juce::String face ("Menlo");
+       #else
+        const juce::String face (juce::Font::getDefaultMonospacedFontName());
+       #endif
+        return juce::Font (juce::FontOptions (face, height, juce::Font::plain));
     }
 }
 

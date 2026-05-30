@@ -1,0 +1,29 @@
+KickAss — macOS install (UNSIGNED test build)
+
+This is a v1.1 test build with no Apple code-signing yet, so macOS Gatekeeper
+will block it until you clear the quarantine flag (steps 3–4). One-time only.
+
+1. Unzip KickAss-macOS.zip.
+
+2. Copy the plug-ins into your user plug-in folders:
+   - KickAss.vst3      -> ~/Library/Audio/Plug-Ins/VST3/
+   - KickAss.component -> ~/Library/Audio/Plug-Ins/Components/   (AU: Logic/GarageBand)
+   (KickAss.app is a standalone you can just double-click — see step 4.)
+
+3. Clear Gatekeeper quarantine. Open Terminal and run (adjust the .app path):
+     xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/KickAss.vst3
+     xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/KickAss.component
+     xattr -dr com.apple.quarantine ~/Downloads/KickAss.app
+
+4. First launch of the Standalone: right-click KickAss.app -> Open -> Open
+   (bypasses the "unidentified developer" warning, one time).
+
+5. Restart your DAW. Find it under:  Gleinkaa -> KickAss  (Instrument / Synth / Drum).
+   - Logic only shows AUs that pass validation. If it doesn't appear, run:
+        auval -v aumu Kick Glka
+     and send me the output.
+
+6. Apple Silicon: the build is universal (arm64 + x86_64), so it works native on
+   M-series and under Rosetta.
+
+Cosmetic note: the small monospace readouts may render in a different font on Mac.
