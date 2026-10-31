@@ -225,7 +225,7 @@ void WaveformDisplay::mouseWheelMove (const juce::MouseEvent&, const juce::Mouse
 //==============================================================================
 juce::String WaveformDisplay::hzToNote (float hz)
 {
-    if (hz < 16.0f) return "—";
+    if (hz < 16.0f) return juce::String::fromUTF8 ("\xe2\x80\x94");   // "—"
     // MIDI: A4 = 69 = 440 Hz
     const float midi = 69.0f + 12.0f * std::log2 (hz / 440.0f);
     const int   m = (int) std::round (midi);

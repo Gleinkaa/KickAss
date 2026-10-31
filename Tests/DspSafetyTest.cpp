@@ -1681,6 +1681,33 @@ static void test_nanParamValue_isSanitized()
 }
 
 //==============================================================================
+// Parameter names / value text are UTF-8: "Pitch · Start", "180 °".
+// A plain char* literal is read as Latin-1, which showed as "Pitch Â· Start" in hosts.
+static void test_paramNames_areUtf8()
+{
+    runHeader ("parameter names and degree suffix decode as UTF-8 (no mojibake)");
+    KickAssProcessor p;
+
+    auto* start = p.apvts.getParameter ("start_freq");
+    REQUIRE_MSG (start != nullptr, "start_freq missing");
+    if (start == nullptr) return;
+    REQUIRE_MSG (start->getName (64) == juce::String::fromUTF8 ("Pitch \xc2\xb7 Start"),
+                 "start_freq name: " + start->getName (64));
+
+    for (auto* param : p.getParameters())
+    {
+        const auto name = param->getName (64);
+        REQUIRE_MSG (! name.containsChar ((juce::juce_wchar) 0xC2), "mojibake in name: " + name);
+    }
+
+    auto* phase = p.apvts.getParameter ("phase_offset");
+    REQUIRE_MSG (phase != nullptr, "phase_offset missing");
+    if (phase == nullptr) return;
+    const auto text = phase->getText (0.5f, 16);
+    REQUIRE_MSG (text == juce::String::fromUTF8 ("180 \xc2\xb0"), "phase_offset text: " + text);
+}
+
+//==============================================================================
 int main (int, char**)
 {
     juce::MessageManager::getInstance();
@@ -1710,6 +1737,8 @@ int main (int, char**)
     test_presetLoad_swapsTransientSample();                        // B3
     test_presetApply_resetsUnlistedParams();                        // B5
     test_nanParamValue_isSanitized();                               // B9
+
+    test_paramNames_areUtf8();
 
     if (g_failures == 0)
     {

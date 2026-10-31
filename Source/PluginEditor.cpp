@@ -158,7 +158,7 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
     setupToggle (safetyLimit, "safety_limit", "Safety");
     setupKnob (outputGain,  "output_gain",  "Output");
     setupKnob (pitchTrack,  "pitch_track",  "Pitch Track");
-    setupKnob (phaseOffset, "phase_offset", "Phase °");
+    setupKnob (phaseOffset, "phase_offset", juce::String::fromUTF8 ("Phase \xc2\xb0"));  // "Phase °"
     masterPanel.addAndMakeVisible (invertPhase.button);
     masterPanel.addAndMakeVisible (safetyLimit.button);
     for (auto* k : { &outputGain, &pitchTrack, &phaseOffset })

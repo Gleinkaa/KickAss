@@ -65,71 +65,78 @@ KickAssProcessor::createParameterLayout()
 
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
+    // Names read "Group · Label". The dot is non-ASCII, and a plain char* literal becomes a
+    // juce::String as Latin-1 ("Â·" in hosts), so it goes through fromUTF8.
+    const auto nm = [] (const char* group, const char* label)
+    {
+        return juce::String (group) + juce::String::fromUTF8 (" \xc2\xb7 ") + label;
+    };
+
     // ---- PITCH ----
-    params.push_back (std::make_unique<AF> (PID { "start_freq", VER }, "Pitch · Start",
+    params.push_back (std::make_unique<AF> (PID { "start_freq", VER }, nm ("Pitch", "Start"),
         rangeSkewed (100.0f, 15000.0f, 1.0f, 0.30f), 8000.0f,
         attrs (fmtHz)));
 
-    params.push_back (std::make_unique<AF> (PID { "mid_freq", VER }, "Pitch · Mid",
+    params.push_back (std::make_unique<AF> (PID { "mid_freq", VER }, nm ("Pitch", "Mid"),
         rangeSkewed (50.0f, 1000.0f, 1.0f, 0.30f), 150.0f,
         attrs (fmtHz)));
 
-    params.push_back (std::make_unique<AF> (PID { "end_freq", VER }, "Pitch · End",
+    params.push_back (std::make_unique<AF> (PID { "end_freq", VER }, nm ("Pitch", "End"),
         rangeSkewed (20.0f, 100.0f, 0.01f, 0.50f), 46.25f,
         attrs (fmtHz)));
 
-    params.push_back (std::make_unique<AF> (PID { "sweep_time_1", VER }, "Pitch · Sweep 1",
+    params.push_back (std::make_unique<AF> (PID { "sweep_time_1", VER }, nm ("Pitch", "Sweep 1"),
         rangeSkewed (0.1f, 50.0f, 0.1f, 0.30f), 10.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "sweep_time_2", VER }, "Pitch · Sweep 2",
+    params.push_back (std::make_unique<AF> (PID { "sweep_time_2", VER }, nm ("Pitch", "Sweep 2"),
         rangeSkewed (1.0f, 250.0f, 0.5f, 0.30f), 80.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "pitch_curve", VER }, "Pitch · Curve",
+    params.push_back (std::make_unique<AF> (PID { "pitch_curve", VER }, nm ("Pitch", "Curve"),
         rangeSkewed (0.1f, 10.0f, 0.1f, 0.50f), 3.0f,
         attrs (fmtRatio)));
 
     // ---- AMP ----
-    params.push_back (std::make_unique<AF> (PID { "vol_attack", VER }, "Amp · Attack",
+    params.push_back (std::make_unique<AF> (PID { "vol_attack", VER }, nm ("Amp", "Attack"),
         rangeSkewed (0.0f, 30.0f, 0.1f, 0.50f), 2.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "vol_hold", VER }, "Amp · Hold",
+    params.push_back (std::make_unique<AF> (PID { "vol_hold", VER }, nm ("Amp", "Hold"),
         rangeSkewed (0.0f, 50.0f, 0.1f, 0.50f), 10.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "vol_decay_1", VER }, "Amp · Decay 1",
+    params.push_back (std::make_unique<AF> (PID { "vol_decay_1", VER }, nm ("Amp", "Decay 1"),
         rangeSkewed (0.0f, 150.0f, 0.5f, 0.50f), 50.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "vol_sustain", VER }, "Amp · Sustain",
+    params.push_back (std::make_unique<AF> (PID { "vol_sustain", VER }, nm ("Amp", "Sustain"),
         juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f), 40.0f,
         attrs (fmtPct)));
 
-    params.push_back (std::make_unique<AF> (PID { "vol_decay_2", VER }, "Amp · Decay 2",
+    params.push_back (std::make_unique<AF> (PID { "vol_decay_2", VER }, nm ("Amp", "Decay 2"),
         rangeSkewed (0.0f, 700.0f, 1.0f, 0.50f), 150.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "vol_curve", VER }, "Amp · Curve",
+    params.push_back (std::make_unique<AF> (PID { "vol_curve", VER }, nm ("Amp", "Curve"),
         rangeSkewed (0.1f, 10.0f, 0.1f, 0.50f), 3.0f,
         attrs (fmtRatio)));
 
     // ---- SCOOP ----
-    params.push_back (std::make_unique<AF> (PID { "scoop_start", VER }, "Scoop · Start",
+    params.push_back (std::make_unique<AF> (PID { "scoop_start", VER }, nm ("Scoop", "Start"),
         rangeSkewed (0.0f, 50.0f, 0.1f, 0.50f), 10.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "scoop_length", VER }, "Scoop · Length",
+    params.push_back (std::make_unique<AF> (PID { "scoop_length", VER }, nm ("Scoop", "Length"),
         rangeSkewed (1.0f, 100.0f, 0.5f, 0.50f), 30.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "scoop_depth", VER }, "Scoop · Depth",
+    params.push_back (std::make_unique<AF> (PID { "scoop_depth", VER }, nm ("Scoop", "Depth"),
         juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f), 0.0f,
         attrs (fmtPct)));
 
     // ---- TRANSIENT ----
-    params.push_back (std::make_unique<AF> (PID { "click_vol", VER }, "Transient · Vol",
+    params.push_back (std::make_unique<AF> (PID { "click_vol", VER }, nm ("Transient", "Vol"),
         juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
         juce::AudioParameterFloatAttributes()
             .withCategory (AF::genericParameter)
@@ -137,59 +144,59 @@ KickAssProcessor::createParameterLayout()
                 [] (float v, int) { return juce::String (juce::roundToInt (v * 100.0f)) + " %"; })));
 
     // "Sample" appended at index 3 so existing presets/indices (Sine/Noise/Both) are unchanged.
-    params.push_back (std::make_unique<ACh> (PID { "click_type", VER }, "Transient · Source",
+    params.push_back (std::make_unique<ACh> (PID { "click_type", VER }, nm ("Transient", "Source"),
         juce::StringArray { "Sine", "Noise", "Both", "Sample" }, 0));
 
-    params.push_back (std::make_unique<AF> (PID { "click_hpf", VER }, "Transient · HPF",
+    params.push_back (std::make_unique<AF> (PID { "click_hpf", VER }, nm ("Transient", "HPF"),
         rangeSkewed (200.0f, 4000.0f, 1.0f, 0.30f), 800.0f,
         attrs (fmtHz)));
 
-    params.push_back (std::make_unique<AF> (PID { "click_tone", VER }, "Transient · Tone",
+    params.push_back (std::make_unique<AF> (PID { "click_tone", VER }, nm ("Transient", "Tone"),
         rangeSkewed (2000.0f, 16000.0f, 1.0f, 0.30f), 10000.0f,
         attrs (fmtHz)));
 
-    params.push_back (std::make_unique<AF> (PID { "click_decay", VER }, "Transient · Decay",
+    params.push_back (std::make_unique<AF> (PID { "click_decay", VER }, nm ("Transient", "Decay"),
         rangeSkewed (1.0f, 30.0f, 0.1f, 0.50f), 5.0f,
         attrs (fmtMs)));
 
     // ---- DRIVE ----
-    params.push_back (std::make_unique<AF> (PID { "drive", VER }, "Drive · Base",
+    params.push_back (std::make_unique<AF> (PID { "drive", VER }, nm ("Drive", "Base"),
         rangeSkewed (1.0f, 10.0f, 0.1f, 0.50f), 1.5f,
         attrs (fmtRatio)));
 
-    params.push_back (std::make_unique<AF> (PID { "tail_drive", VER }, "Drive · Tail",
+    params.push_back (std::make_unique<AF> (PID { "tail_drive", VER }, nm ("Drive", "Tail"),
         rangeSkewed (0.0f, 10.0f, 0.1f, 0.50f), 0.0f,
         attrs (fmtRatio)));
 
     // Saturation flavour. Default Tanh (index 0) = the v1.0 character, so existing
     // presets render bit-for-bit identically until the user picks another mode.
-    params.push_back (std::make_unique<ACh> (PID { "sat_type", VER }, "Drive · Type",
+    params.push_back (std::make_unique<ACh> (PID { "sat_type", VER }, nm ("Drive", "Type"),
         juce::StringArray { "Tanh", "Soft Clip", "Hard Clip", "Tube", "Foldback" }, 0));
 
     // ---- MASTER ----
-    params.push_back (std::make_unique<AB> (PID { "invert_phase", VER }, "Master · Invert Phase", false));
+    params.push_back (std::make_unique<AB> (PID { "invert_phase", VER }, nm ("Master", "Invert Phase"), false));
 
-    params.push_back (std::make_unique<AB> (PID { "safety_limit", VER }, "Master · Safety", true));
+    params.push_back (std::make_unique<AB> (PID { "safety_limit", VER }, nm ("Master", "Safety"), true));
 
-    params.push_back (std::make_unique<AF> (PID { "output_gain", VER }, "Master · Output",
+    params.push_back (std::make_unique<AF> (PID { "output_gain", VER }, nm ("Master", "Output"),
         juce::NormalisableRange<float> (-24.0f, 6.0f, 0.1f), 0.0f,
         attrs (fmtDb)));
 
-    params.push_back (std::make_unique<AF> (PID { "pitch_track", VER }, "Master · Pitch Track",
+    params.push_back (std::make_unique<AF> (PID { "pitch_track", VER }, nm ("Master", "Pitch Track"),
         juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f), 0.0f,
         attrs (fmtPct)));
 
-    params.push_back (std::make_unique<AF> (PID { "phase_offset", VER }, "Master · Phase Offset",
+    params.push_back (std::make_unique<AF> (PID { "phase_offset", VER }, nm ("Master", "Phase Offset"),
         juce::NormalisableRange<float> (0.0f, 360.0f, 1.0f), 0.0f,
         juce::AudioParameterFloatAttributes()
             .withCategory (AF::genericParameter)
             .withStringFromValueFunction (
-                [] (float v, int) { return juce::String (juce::roundToInt (v)) + " °"; })));
+                [] (float v, int) { return juce::String (juce::roundToInt (v)) + juce::String::fromUTF8 (" \xc2\xb0"); })));  // " °"
 
     // ---- GLOBAL ENVELOPE MODE (Phase 6b) ----
     // 0 = Simple (AHDSR knobs drive DSP), 1 = Advanced (custom breakpoint curve drives DSP).
     // Default Advanced per user choice — breakpoint editor visible immediately.
-    params.push_back (std::make_unique<ACh> (PID { "envelope_mode", VER }, "Envelope · Mode",
+    params.push_back (std::make_unique<ACh> (PID { "envelope_mode", VER }, nm ("Envelope", "Mode"),
         juce::StringArray { "Simple", "Advanced" }, 1));
 
     return { params.begin(), params.end() };
