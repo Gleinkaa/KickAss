@@ -1,5 +1,7 @@
 # Build outputs
 build/
+build-linux/
+tools/kickfit/build/
 dist/
 out/
 
