@@ -201,6 +201,8 @@ KickAssEditor::KickAssEditor (KickAssProcessor& p)
     // Capture keyboard focus so Ctrl+Z / Ctrl+Shift+Z reach keyPressed().
     setWantsKeyboardFocus (true);
     updateUndoRedoEnablement();
+    // B6: message-thread poll for the atomic flags raised in parameterChanged.
+    paramFlagPoll.startTimerHz (30);
     abBtn.setButtonText ("A");
     abBtn.onClick = [this]
     {
@@ -395,9 +397,18 @@ void KickAssEditor::beginWavDragOut (const juce::MouseEvent& e)
     if (isDragAndDropActive() || e.getDistanceFromDragStart() < 6)
         return;
 
-    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                   .getChildFile ("KickAss");
-    dir.createDirectory();
+    // B13 — persistent, user-visible folder. DAWs reference a dropped WAV in
+    // place, so the old temp-dir location was wrong (temp files are never
+    // cleaned here and could vanish from under a session). Documents/KickAss
+    // matches the user-folder conventions used by EXPORT WAV's default path
+    // (userDocumentsDirectory) and the preset dir (…/KickAss/Presets). No
+    // pruning — a prune was tried and reverted because it breaks DAWs that
+    // reference earlier drag-outs (R2).
+    auto dir = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                   .getChildFile ("KickAss")
+                   .getChildFile ("DragOuts");
+    if (! dir.exists())
+        dir.createDirectory();   // recursive: creates KickAss/ if needed
 
     // Name from the active preset (falls back to "kick") so the dropped file is
     // recognisable; timestamp keeps repeated drags from colliding.
@@ -439,20 +450,39 @@ void KickAssEditor::doToggleAB()
     auto& currentSlot = abSlotIsB ? abSlotB : abSlotA;
     auto& otherSlot   = abSlotIsB ? abSlotA : abSlotB;
 
+    const bool wasModified = isPresetModified;
+
     currentSlot = current;                  // remember where we were
     if (! otherSlot.isValid())
         otherSlot = current.createCopy();   // first flip: B starts equal to A
 
     // A/B is a deliberate state swap, not a parameter edit — don't let the burst
     // of listener callbacks falsely flip the modified-preset asterisk on.
+    // The flags are classified at fire time (B6), so the burst never marks
+    // modified; belt-and-braces, restore the pre-swap modified state after the
+    // burst settles (B7) — an unmodified slot stays unmodified after a toggle.
     suppressModificationDetect = true;
-    processorRef.apvts.replaceState (otherSlot.createCopy());
-    processorRef.restoreVolCurveFromStateOrAhdsr();
+    // B7: swap WITHOUT replaceState() — that calls clearUndoHistory() and wiped
+    // the undo stack on every A/B press. applyStatePreservingUndo() records the
+    // whole swap as ONE undo transaction instead, so edits made before the
+    // toggle stay undoable and undo steps back over the toggle. It also swaps
+    // <Curves>/<Sample> and calls restoreVolCurveFromStateOrAhdsr() +
+    // restoreTransientSampleFromState() itself (B3: the transient sample must
+    // swap too, or the other slot keeps playing this slot's sample; engines are
+    // cleared when the target slot's <Sample> path is gone).
+    processorRef.applyStatePreservingUndo (otherSlot.createCopy());
     suppressModificationDetect = false;
 
     abSlotIsB = ! abSlotIsB;
     abBtn.setButtonText (abSlotIsB ? "B" : "A");
     updateSampleLabel();
+
+    juce::Component::SafePointer<KickAssEditor> safeThis (this);
+    juce::MessageManager::callAsync ([safeThis, wasModified]
+    {
+        if (auto* self = safeThis.getComponent())
+            self->setPresetModifiedState (wasModified);
+    });
 }
 
 void KickAssEditor::doCopyAB()
@@ -572,6 +602,7 @@ void KickAssEditor::fileDragExit (const juce::StringArray&)
 
 KickAssEditor::~KickAssEditor()
 {
+    paramFlagPoll.stopTimer();   // stop the B6 flag poll before any member destruction
     stopTimer();   // stop Auto Play before any member destruction
     for (auto* prm : processorRef.getParameters())
         if (auto* rap = dynamic_cast<juce::RangedAudioParameter*> (prm))
@@ -584,18 +615,34 @@ KickAssEditor::~KickAssEditor()
 //==============================================================================
 void KickAssEditor::parameterChanged (const juce::String& paramID, float /*newValue*/)
 {
-    // APVTS listener may fire on the audio thread — bounce to message thread for UI work.
-    juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<KickAssEditor> (this), paramID]
-    {
-        auto* self = safeThis.getComponent();
-        if (! self) return;
-        if (paramID == "envelope_mode")
-            self->syncEnvelopeModeUI();
-        if (! self->suppressModificationDetect)
-            self->markPresetModified();
-        // Any parameter edit may have pushed/altered the undo stack.
-        self->updateUndoRedoEnablement();
-    });
+    // May fire on the audio thread (host automation): allocations and message
+    // posts are forbidden here (B6). Raise atomic flags only; the editor's
+    // paramFlagPoll Timer consumes them on the message thread. APVTS delivers
+    // this listener synchronously on the changing thread, so a bulk apply
+    // bracketed by suppressModificationDetect is correctly classified here,
+    // at fire time (B7).
+    if (paramID == "envelope_mode")
+        envelopeModeChanged.store (true, std::memory_order_release);
+
+    if (suppressModificationDetect.load (std::memory_order_relaxed))
+        undoUiDirty.store (true, std::memory_order_release);   // programmatic bulk edit
+    else
+        paramUiDirty.store (true, std::memory_order_release);  // genuine user/host change
+}
+
+void KickAssEditor::pollParameterUiFlags()
+{
+    // Message-thread consumer for the flags raised in parameterChanged (B6).
+    if (envelopeModeChanged.exchange (false, std::memory_order_acquire))
+        syncEnvelopeModeUI();
+
+    const bool paramDirty = paramUiDirty.exchange (false, std::memory_order_acquire);
+    const bool undoDirty  = undoUiDirty .exchange (false, std::memory_order_acquire);
+
+    if (paramDirty)
+        markPresetModified();
+    if (paramDirty || undoDirty)
+        updateUndoRedoEnablement();
 }
 
 void KickAssEditor::markPresetModified()
@@ -607,8 +654,17 @@ void KickAssEditor::markPresetModified()
 
 void KickAssEditor::clearPresetModifiedFlag()
 {
-    isPresetModified = false;
-    modifiedDot.setVisible (false);
+    setPresetModifiedState (false);
+}
+
+void KickAssEditor::setPresetModifiedState (bool modified)
+{
+    isPresetModified = modified;
+    modifiedDot.setVisible (modified);
+    // Drop any pending "genuine change" flag a programmatic burst may have
+    // raised just outside its suppress bracket, so the next poll tick doesn't
+    // re-light the asterisk after a preset load / A-B swap (B7).
+    paramUiDirty.store (false, std::memory_order_relaxed);
 }
 
 void KickAssEditor::setEnvelopeMode (bool advanced)
@@ -627,6 +683,10 @@ void KickAssEditor::setEnvelopeMode (bool advanced)
         if (! juce::approximatelyEqual (p->getValue(), norm))
             p->setValueNotifyingHost (norm);
     }
+
+    // Update the segmented control + knob dimming immediately on user clicks;
+    // the B6 flag-poll path still catches external/preset-driven changes.
+    syncEnvelopeModeUI();
 }
 
 void KickAssEditor::syncEnvelopeModeUI()
@@ -709,6 +769,9 @@ void KickAssEditor::doUndo()
     // lives in apvts.state (NOT as an APVTS param) and is NOT captured by undo.
     // Re-derive it from the restored state so the curve view + DSP stay consistent.
     processorRef.restoreVolCurveFromStateOrAhdsr();
+    // B7: an undone A/B swap restores the <Sample> node too — re-sync the
+    // engines so the restored slot plays its own sample, not the other one.
+    processorRef.restoreTransientSampleFromState();
     updateSampleLabel();
     updateUndoRedoEnablement();
     repaint();
@@ -718,6 +781,7 @@ void KickAssEditor::doRedo()
 {
     processorRef.redo();
     processorRef.restoreVolCurveFromStateOrAhdsr();
+    processorRef.restoreTransientSampleFromState();
     updateSampleLabel();
     updateUndoRedoEnablement();
     repaint();

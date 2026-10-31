@@ -90,6 +90,47 @@ public:
     /** Stored transient-sample path ("" if none). Reads apvts.state. */
     juce::String getTransientSamplePath() const;
 
+    /** B3/B4: make BOTH engines match the <Sample> node currently in
+        apvts.state. If the node carries a path to an existing, readable file,
+        the sample is (re)loaded; otherwise (no node, empty path, missing or
+        unreadable file) the engines are cleared WITHOUT deleting the node —
+        a project opened on a machine where the file is absent must not
+        destroy the path for sessions where it exists. Called after every
+        path that replaces APVTS state: setStateInformation,
+        PresetManager::loadKickPreset, KickAssEditor::doToggleAB. */
+    void restoreTransientSampleFromState();
+
+    /** B9: strip <PARAM> children whose 'value' attribute parses to a
+        non-finite number (NaN / ±Inf — e.g. value="nan"). JUCE's XML reader
+        keeps such attributes as strings and the var→double conversion
+        happily yields NaN, which APVTS then pushes straight into the
+        parameter (NaN audio). Removing the child makes the parameter fall
+        back to its default instead (APVTS re-creates the child without a
+        value property and applies the default). Call BEFORE
+        apvts.replaceState(). */
+    void removeNonFiniteParameterChildren (juce::ValueTree& stateTree);
+
+    /** B7: undo-preserving state swap for A/B compare.
+        AudioProcessorValueTreeState::replaceState() calls
+        undoManager->clearUndoHistory(), so the A/B toggle used to wipe the
+        undo stack on every press. This applies a snapshot state (e.g. an A/B
+        slot from copyState()) to the LIVE APVTS inside ONE UndoManager
+        transaction instead — the swap itself becomes a single undo step and
+        edits made before the toggle stay undoable:
+        - every parameter reads its value out of newState's <PARAM> child
+          (matching APVTS's own storage: the "value" property holds the
+          DENORMALISED value, verified against copyState() output) and is
+          pushed via setValueNotifyingHost; a parameter absent from newState
+          goes to its default;
+        - the non-PARAM children the A/B slots swap, <Curves> and <Sample>,
+          are removed/re-appended as undoable child operations (a copy, never
+          the slot's own tree, so the live state can't alias a stored slot);
+        - restoreVolCurveFromStateOrAhdsr() / restoreTransientSampleFromState()
+          then make the engines match, exactly like setStateInformation.
+        Message-thread only (like every setValueNotifyingHost caller). Never
+        touches the undo history itself — no clearUndoHistory(). */
+    void applyStatePreservingUndo (const juce::ValueTree& newState);
+
     /** UI reads this at ~30Hz to draw the playback cursor in the waveform display. */
     int getPlaybackSamplePos() const noexcept { return engine.getPlaybackSamplePos(); }
 

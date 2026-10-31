@@ -48,5 +48,12 @@ private:
 
     void applyParameterMap (const juce::NamedValueSet& kv);
 
+    /** B5: reset every RangedAudioParameter to its default — except
+        'envelope_mode' (UI mode preference, deliberately survives preset
+        applies). Called by applyFactory/loadJson before applyParameterMap so
+        parameters the preset data doesn't list don't leak the user's
+        previous values. */
+    void resetParametersToDefaults();
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PresetManager)
 };

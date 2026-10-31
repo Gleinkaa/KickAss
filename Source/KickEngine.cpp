@@ -105,6 +105,10 @@ void KickEngine::prepare (double sr, int samplesPerBlock)
     crossfadeLen = juce::jmax (8, (int) (crossfadeMs * sampleRate * 0.001));
     crossfadeTail.assign ((size_t) crossfadeLen, 0.0f);
 
+    // A9: ~10 ms linear-in-gain smoothing for the output gain stage.
+    // (Ramp length only — the value itself is set in reset().)
+    outputGainSmoothed.reset (sampleRate, 0.010);
+
     reset();
 }
 
@@ -115,6 +119,7 @@ void KickEngine::reset()
     phase = 0.0;
     sampleSinceTrigger = 0;
     totalSamples = 0;
+    voiceEndSamples = 0;
     velocity = 1.0f;
     pitchTransposeRatio = 1.0f;
 
@@ -128,6 +133,11 @@ void KickEngine::reset()
 
     crossfadeRemaining = 0;
     std::fill (crossfadeTail.begin(), crossfadeTail.end(), 0.0f);
+
+    // A9: current AND target set immediately — a constant gain never ramps, so
+    // offline/single-trigger renders stay bit-identical to the pre-smoothing
+    // per-block multiply.
+    outputGainSmoothed.setCurrentAndTargetValue (dbToGain (params.outputGainDb));
 
     if (oversampler)
         oversampler->reset();
@@ -147,38 +157,59 @@ int KickEngine::computeTotalSamples() const noexcept
 }
 
 //==============================================================================
-// Phase 6b — publish curve to inactive LUT slot then atomic-flip the index.
+// Phase 6b — publish curve to a FREE LUT slot then atomic-flip the index.
 // Called from UI thread. Audio thread reads activeLutIdx with acquire ordering.
 //==============================================================================
+int KickEngine::pickFreeLutSlot() const noexcept
+{
+    // UI is the only writer of activeLutIdx → relaxed load of our own value;
+    // acquire pairs with the audio thread's release store at triggerNote.
+    const int activeSlot = activeLutIdx.load (std::memory_order_relaxed);
+    const int voiceSlot  = voiceLutIdxAtomic.load (std::memory_order_acquire);
+    for (int i = 0; i < 3; ++i)
+        if (i != activeSlot && i != voiceSlot)
+            return i;
+    return activeSlot;   // unreachable: 3 slots, 2 exclusions
+}
+
 void KickEngine::publishVolCurve (const EnvCurve& src)
 {
-    const int inactive = 1 - activeLutIdx.load (std::memory_order_relaxed);
-    auto& lut = (inactive == 0) ? ampLutA : ampLutB;
-    src.fillLut (lut);
-    lutTotalMs[inactive] = src.getTotalMs();
-    activeLutIdx.store (inactive, std::memory_order_release);
+    const int slot = pickFreeLutSlot();
+    src.fillLut (ampLuts[(size_t) slot]);
+    lutTotalMs[slot] = src.getTotalMs();
+    activeLutIdx.store (slot, std::memory_order_release);
 }
 
 //==============================================================================
-// v1.1 — publish a (mono) transient sample into the inactive slot then atomic-flip.
+// v1.1 — publish a (mono) transient sample into a FREE slot then atomic-flip.
 // Called from UI thread. The buffer copy is the ONLY allocation; the audio thread
 // reads activeSampleIdx with acquire ordering and never allocates.
 //==============================================================================
+int KickEngine::pickFreeSampleSlot() const noexcept
+{
+    const int activeSlot = activeSampleIdx.load (std::memory_order_relaxed);
+    const int voiceSlot  = voiceSampleIdxAtomic.load (std::memory_order_acquire);
+    for (int i = 0; i < 3; ++i)
+        if (i != activeSlot && i != voiceSlot)
+            return i;
+    return activeSlot;   // unreachable: 3 slots, 2 exclusions
+}
+
 void KickEngine::publishTransientSample (const juce::AudioBuffer<float>& monoData, double sourceSampleRate)
 {
-    const int inactive = 1 - activeSampleIdx.load (std::memory_order_relaxed);
-    auto& slot = (inactive == 0) ? sampleSlotA : sampleSlotB;
+    const int slot = pickFreeSampleSlot();
+    auto& dest = sampleSlots[(size_t) slot];
 
     const int len = juce::jmax (0, monoData.getNumSamples());
-    slot.setSize (1, juce::jmax (1, len), false, false, true);   // keep at least 1 sample of storage
-    slot.clear();
+    dest.setSize (1, juce::jmax (1, len), false, false, true);   // keep at least 1 sample of storage
+    dest.clear();
     if (len > 0 && monoData.getNumChannels() > 0)
-        slot.copyFrom (0, 0, monoData, 0, 0, len);
+        dest.copyFrom (0, 0, monoData, 0, 0, len);
 
-    sampleLength[inactive]     = len;
-    sampleSourceRate[inactive] = (sourceSampleRate > 0.0) ? sourceSampleRate : 44100.0;
+    sampleLength[slot]     = len;
+    sampleSourceRate[slot] = (sourceSampleRate > 0.0) ? sourceSampleRate : 44100.0;
 
-    activeSampleIdx.store (inactive, std::memory_order_release);
+    activeSampleIdx.store (slot, std::memory_order_release);
 }
 
 //==============================================================================
@@ -186,10 +217,10 @@ void KickEngine::publishTransientSample (const juce::AudioBuffer<float>& monoDat
 //==============================================================================
 void KickEngine::clearTransientSample()
 {
-    const int inactive = 1 - activeSampleIdx.load (std::memory_order_relaxed);
-    sampleLength[inactive]     = 0;
-    sampleSourceRate[inactive] = 44100.0;
-    activeSampleIdx.store (inactive, std::memory_order_release);
+    const int slot = pickFreeSampleSlot();
+    sampleLength[slot]     = 0;
+    sampleSourceRate[slot] = 44100.0;
+    activeSampleIdx.store (slot, std::memory_order_release);
 }
 
 //==============================================================================
@@ -204,6 +235,16 @@ void KickEngine::triggerNote (int midiNote, float vel, int /*sampleOffset*/) noe
         crossfadeRemaining = crossfadeLen;
     }
 
+    // R1: idle trigger — no voice and no crossfade is sounding, so there is
+    // nothing for a gain ramp to cross. Snap the output-gain smoother to the
+    // current value: applyPostStages (the only place the smoother advances)
+    // never runs while idle, so without this snap a gain change made between
+    // kicks would be ramped over the first ~10 ms — the transient — of the
+    // NEXT kick. While a voice IS active we leave the smoother untouched so
+    // in-flight gain changes keep their audible ~10 ms ramp (A9).
+    if (! active.load() && crossfadeRemaining == 0)
+        outputGainSmoothed.setCurrentAndTargetValue (dbToGain (params.outputGainDb));
+
     // Reset voice state. phase=0 is a clean zero-crossing start; user phaseOffset
     // (0..1 = 0..360°) lets them dial in click vs. boom on the very first sample.
     phase = (double) juce::jlimit (0.0f, 1.0f, params.phaseOffset);
@@ -213,9 +254,11 @@ void KickEngine::triggerNote (int midiNote, float vel, int /*sampleOffset*/) noe
     // Phase 6b: snapshot curve mode + LUT for the voice. Lock-free read of the
     // atomically-published active index; the UI thread can flip it after this
     // point and this voice will still use the snapshotted slot for its lifetime.
+    // The voice index is published (release) so the UI slot picker can exclude
+    // this slot — see the triple-buffer protocol comment in the header.
     voiceUseCurve   = curveModeAtomic.load (std::memory_order_acquire);
-    voiceLutIdx     = activeLutIdx.load    (std::memory_order_acquire);
-    voiceLutTotalMs = lutTotalMs[voiceLutIdx];
+    voiceLutIdxAtomic.store (activeLutIdx.load (std::memory_order_acquire), std::memory_order_release);
+    voiceLutTotalMs = lutTotalMs[voiceLutIdxAtomic.load (std::memory_order_relaxed)];
     if (voiceUseCurve && voiceLutTotalMs <= 0.0f)
         voiceUseCurve = false;   // empty LUT → safe fallback to AHDSR
 
@@ -242,10 +285,26 @@ void KickEngine::triggerNote (int midiNote, float vel, int /*sampleOffset*/) noe
     // v1.1: snapshot the active transient-sample slot for the voice lifetime.
     // Lock-free acquire-load mirrors the LUT snapshot above; the UI thread can
     // publish a new sample after this point without affecting this voice.
-    voiceSampleIdx    = activeSampleIdx.load (std::memory_order_acquire);
+    // The voice index is published (release) so the UI slot picker can exclude
+    // this slot — see the triple-buffer protocol comment in the header.
+    voiceSampleIdxAtomic.store (activeSampleIdx.load (std::memory_order_acquire), std::memory_order_release);
+    const int voiceSampleIdx = voiceSampleIdxAtomic.load (std::memory_order_relaxed);
     voiceSampleLength = sampleLength[voiceSampleIdx];
     voiceSampleRate   = sampleSourceRate[voiceSampleIdx];
     samplePlayPos     = 0.0;
+
+    // A5: end-of-voice sample count. In Sample click mode with a loaded sample
+    // the voice must OUTLIVE the amp envelope so the sample plays its natural
+    // length (see the sample-layer comment in renderOneDrySample) instead of
+    // being hard-cut at the envelope end. voiceEndSamples feeds ONLY the
+    // end-of-voice check — totalSamples keeps normalizing the drive ramp.
+    voiceEndSamples = totalSamples;
+    if (params.clickType == 3 && voiceSampleLength > 0 && voiceSampleRate > 0.0)
+    {
+        const double samplePlaybackSamples =
+            std::ceil ((double) voiceSampleLength * sampleRate / voiceSampleRate);
+        voiceEndSamples = juce::jmax (totalSamples, (int) samplePlaybackSamples);
+    }
 
     // Do NOT reset DC blocker state — it should ringdown naturally and helps mask the click.
 }
@@ -301,7 +360,7 @@ float KickEngine::renderOneDrySample() noexcept
             const float pos    = (t / totalSec) * (float) (EnvCurve::kLutSize - 1);
             const int   idx    = (int) pos;
             const float frac   = pos - (float) idx;
-            const auto& lut    = (voiceLutIdx == 0) ? ampLutA : ampLutB;
+            const auto& lut    = ampLuts[(size_t) voiceLutIdxAtomic.load (std::memory_order_relaxed)];
             const float a0     = lut[(size_t) juce::jlimit (0, EnvCurve::kLutSize - 1, idx)];
             const float a1     = lut[(size_t) juce::jlimit (0, EnvCurve::kLutSize - 1, idx + 1)];
             ampEnv = a0 + (a1 - a0) * frac;
@@ -384,7 +443,7 @@ float KickEngine::renderOneDrySample() noexcept
         {
             // SR-correct linear-interpolated read. Step so the sample plays at its
             // recorded pitch regardless of the engine's current sample rate.
-            const auto& slot = (voiceSampleIdx == 0) ? sampleSlotA : sampleSlotB;
+            const auto& slot = sampleSlots[(size_t) voiceSampleIdxAtomic.load (std::memory_order_relaxed)];
             const float* data = slot.getReadPointer (0);
             const int   i0    = (int) samplePlayPos;
             const int   i1    = juce::jmin (i0 + 1, voiceSampleLength - 1);
@@ -438,6 +497,14 @@ float KickEngine::renderOneDrySample() noexcept
     // sampleActive is false and the synth branch is skipped → silent transient,
     // no OOB read, no crash.
 
+    // A4: velocity is applied to THIS voice's sample here — BEFORE the
+    // crossfade mix. The tail below is a snapshot of the PREVIOUS voice's
+    // already-velocity-scaled output; scaling it again with the new velocity
+    // would multiply vel_old × vel_new (ghost retrigger notes ~10× quieter
+    // than the dying tail they replace = audible click). A single voice
+    // (no crossfade) is bit-identical to the old `return sample * velocity`.
+    sample *= velocity;
+
     // Apply retrigger crossfade — mix in dying tail of previous voice
     if (crossfadeRemaining > 0)
     {
@@ -449,13 +516,21 @@ float KickEngine::renderOneDrySample() noexcept
 
     // Advance time. After we return, check whether voice should end.
     ++sampleSinceTrigger;
-    if (t >= p4End && crossfadeRemaining == 0)
+    // A5: in Sample click mode the voice lives until the loaded sample has
+    // played its natural length (voiceEndSamples, computed at triggerNote),
+    // even past the amp-envelope end. In every other case voiceEndSamples ==
+    // totalSamples and the original envelope-end comparison is kept verbatim
+    // so render timing is unchanged.
+    const bool voiceDone = (voiceEndSamples > totalSamples)
+                              ? (sampleSinceTrigger >= voiceEndSamples)
+                              : (t >= p4End);
+    if (voiceDone && crossfadeRemaining == 0)
     {
         active.store (false);
     }
     playbackPos.store (sampleSinceTrigger);
 
-    return sample * velocity;
+    return sample;
 }
 
 //==============================================================================
@@ -512,13 +587,18 @@ void KickEngine::applyPostStages (float* samples, int n) noexcept
         samples[i] = y;
     }
 
-    // --- Soft-clip ceiling at -0.3 dBFS ---
+    // --- Soft-clip ceiling at -0.3 dBFS (A8) ---
+    // A TRUE ceiling: slope 1 for |x| << ceil, asymptote ceil, so |out| < ceil
+    // (= -0.3 dBFS) for any finite input. The old 1/tanh(1) "±1 in → ±1 out"
+    // normalization made the stage unity-slope × 1.313 (+2.4 dB) with an
+    // asymptote of ceil/tanh(1) ≈ +2.1 dBFS — not a ceiling at all: with the
+    // safety limiter off the output exceeded 0 dBFS. The linear region is now
+    // ~2.4 dB quieter than before — intentional, no make-up gain.
     const float ceil = dbToGain (kSoftClipCeilDb);
-    const float invTanhCeil = 1.0f / std::tanh (1.0f);  // normalize so ±1 in → ±1 out approximately
     for (int i = 0; i < n; ++i)
     {
-        // soft clip: tanh-based, scaled so |x| << ceil passes through, |x| >= ceil rolls off
-        samples[i] = ceil * std::tanh (samples[i] / ceil) * invTanhCeil;
+        // soft clip: unity slope at 0, hard-bounded by the -0.3 dBFS asymptote
+        samples[i] = ceil * std::tanh (samples[i] / ceil);
     }
 
     // --- Polarity invert ---
@@ -528,13 +608,15 @@ void KickEngine::applyPostStages (float* samples, int n) noexcept
             samples[i] = -samples[i];
     }
 
-    // --- Output gain ---
-    const float gain = dbToGain (params.outputGainDb);
-    if (! juce::approximatelyEqual (gain, 1.0f))
-    {
-        for (int i = 0; i < n; ++i)
-            samples[i] *= gain;
-    }
+    // --- Output gain (A9: per-sample smoothed, ~10 ms linear in gain) ---
+    // Old behaviour applied the gain as a per-block constant → zipper noise on
+    // automation. setTargetValue is a no-op while the value is unchanged and a
+    // finished ramp returns the exact target, so a constant gain multiplies
+    // every sample by the same value — bit-identical to the old block multiply
+    // (x * 1.0f == x exactly, so the old gain==1.0 skip is equivalent too).
+    outputGainSmoothed.setTargetValue (dbToGain (params.outputGainDb));
+    for (int i = 0; i < n; ++i)
+        samples[i] *= outputGainSmoothed.getNextValue();
 
     // --- Safety limiter (final stage, AFTER output gain) ---
     // The -0.3 dBFS soft-clip above is a CHARACTER stage and runs before the
@@ -555,25 +637,50 @@ void KickEngine::renderBlock (juce::AudioBuffer<float>& buffer,
                               int startSample, int numSamples) noexcept
 {
     if (! active.load() && crossfadeRemaining == 0)
+    {
+        // R1: engine idle. applyPostStages — the only place the output-gain
+        // smoother advances — never runs in this state, so a gain change made
+        // between kicks would still be sitting on a stale smoother value when
+        // the next kick starts (ramped across its transient). Snap it here;
+        // setCurrentAndTargetValue is allocation-free and lock-free (RT-safe).
+        // While a voice sounds we never take this path, so mid-voice gain
+        // changes keep ramping (A9).
+        outputGainSmoothed.setCurrentAndTargetValue (dbToGain (params.outputGainDb));
+        return;
+    }
+    if (numSamples <= 0)
         return;
 
-    if ((int) dryScratch.size() < numSamples)
-        return;  // shouldn't happen — prepare() sized this to blockSize
+    const int chunk = (int) dryScratch.size();
+    if (chunk <= 0)
+        return;   // not prepared yet — nothing we can render into
 
-    // 1. Render dry samples
-    for (int i = 0; i < numSamples; ++i)
-        dryScratch[(size_t) i] = renderOneDrySample();
-
-    // 2. Apply post-stages (oversampled drive + DC blocker + soft-clip + invert + gain)
-    applyPostStages (dryScratch.data(), numSamples);
-
-    // 3. Sum into output buffer (stereo, both channels)
     const int numCh = buffer.getNumChannels();
-    for (int ch = 0; ch < numCh; ++ch)
+
+    // A3: a host is allowed to hand us a buffer larger than the size we were
+    // prepared for. The old code bailed out silently in that case, freezing the
+    // voice mid-kick. Render in chunks of the prepared block size instead —
+    // never larger than the oversampler's initProcessing size. For the normal
+    // case (numSamples <= blockSize) this is a single chunk, i.e. the exact
+    // original code path, so ordinary renders are unchanged.
+    for (int start = 0; start < numSamples; start += chunk)
     {
-        float* out = buffer.getWritePointer (ch, startSample);
-        for (int i = 0; i < numSamples; ++i)
-            out[i] += dryScratch[(size_t) i];
+        const int n = juce::jmin (chunk, numSamples - start);
+
+        // 1. Render dry samples
+        for (int i = 0; i < n; ++i)
+            dryScratch[(size_t) i] = renderOneDrySample();
+
+        // 2. Apply post-stages (oversampled drive + DC blocker + soft-clip + invert + gain)
+        applyPostStages (dryScratch.data(), n);
+
+        // 3. Sum into output buffer (stereo, both channels)
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            float* out = buffer.getWritePointer (ch, startSample + start);
+            for (int i = 0; i < n; ++i)
+                out[i] += dryScratch[(size_t) i];
+        }
     }
 }
 

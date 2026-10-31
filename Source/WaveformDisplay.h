@@ -85,7 +85,13 @@ private:
 
     // Dirty / debounce state
     std::atomic<bool> dirty { true };
-    int   debounceCountdown = 0;       // in timer ticks
+    // Written from parameterChanged — which hosts may call on the audio thread
+    // under automation — so it must be atomic (B6). In timer ticks.
+    std::atomic<int>  debounceCountdown { 0 };
+    // Raised in parameterChanged (any thread) when envelope_mode flips; the
+    // 30 Hz timerCallback consumes it on the message thread (B6 — replaces a
+    // raw-this MessageManager::callAsync that could UAF after editor close).
+    std::atomic<bool> envelopeModeChanged { false };
     bool  voiceWasActive = false;
 
     // Constants

@@ -82,10 +82,16 @@ public:
 
     void setParams (const KickParams& p) noexcept { params = p; }
 
-    /** Sample-accurate trigger. sampleOffset is the offset within the current block. */
+    /** Trigger a new voice.
+        Sample-accurate MIDI timing is achieved by the CALLER: processBlock
+        renders the block in segments between note-on events and calls this at
+        the exact event position, so the voice starts on the very next rendered
+        sample. Callers that do not segment should pass sampleOffset = 0. */
     void triggerNote (int midiNote, float velocity, int sampleOffset) noexcept;
 
-    /** Add the kick into the given stereo buffer at [startSample .. startSample+numSamples). */
+    /** Add the kick into the given stereo buffer at [startSample .. startSample+numSamples).
+        If numSamples exceeds the prepared block size, it is processed in chunks of the
+        prepared size (never larger than the oversampler was initialised with). */
     void renderBlock (juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept;
 
     /** UI-thread offline render. Writes the entire kick into the buffer at the given sample rate. */
@@ -100,9 +106,25 @@ public:
     //--------------------------------------------------------------------------
     // Phase 6b — custom amp envelope via breakpoint curve.
     //
-    // publishVolCurve: called from UI thread. Fills the inactive LUT slot from
+    // publishVolCurve: called from UI thread. Fills a FREE LUT slot from
     // `src`, then atomically flips the active index. Lock-free for the audio
     // thread. Safe to call as often as the editor wants — typical ≤30 Hz.
+    //
+    // TRIPLE-BUFFER protocol (3 slots, A6 fix). The old 2-slot scheme had an
+    // ABA hole: a second publish during one voice picked the very slot the
+    // live voice was reading (the first publish had already flipped `active`
+    // away from it), so the fill — including its setSize realloc — raced the
+    // audio thread (torn audio, use-after-free).
+    //
+    // Roles are strictly separated: the UI thread is the ONLY writer of
+    // activeLutIdx; the audio thread only copies active → voiceLutIdxAtomic
+    // at triggerNote. On publish the UI picks a slot that is neither
+    // `active` nor the live `voiceLutIdxAtomic` slot and fills it before the
+    // release-flip. Because only the UI ever changes `active`, the chosen
+    // slot cannot become the live one while it is being filled: a trigger in
+    // the meantime snapshots `active` (a different slot), and the flip that
+    // would make it live happens strictly after the fill. With 3 slots and 2
+    // exclusions there is always exactly one free slot.
     //
     // setCurveMode: atomic flag. When false, the engine uses the existing
     // closed-form AHDSR math (no behavior change vs. pre-6b). When true, it
@@ -115,15 +137,17 @@ public:
     //--------------------------------------------------------------------------
     // Drag-a-WAV transient layer (v1.1).
     //
-    // Same double-buffered RT-safe handoff as publishVolCurve(): the UI thread
-    // copies the (mono) sample into the INACTIVE slot, stores its source rate +
-    // length, then atomically flips the active index with release ordering. The
-    // audio thread snapshots the active index at triggerNote and reads only the
-    // snapshotted slot for the voice lifetime, so a mid-voice UI replacement
-    // never glitches and never races.
+    // Same TRIPLE-buffered RT-safe handoff as publishVolCurve() (see above)
+    // with sampleLength/sampleSourceRate stored per slot: the UI thread
+    // copies the (mono) sample into a FREE slot — not `active`, not the
+    // live voice's slot — stores its source rate + length, then atomically
+    // flips the active index with release ordering. The audio thread
+    // snapshots the active index at triggerNote (into voiceSampleIdxAtomic)
+    // and reads only that slot for the voice lifetime, so a mid-voice UI
+    // replacement never glitches and never races a setSize realloc.
     //
     // publishTransientSample: UI thread. Copies monoData (1 channel) into the
-    //   inactive slot. Allocation (the AudioBuffer copy) happens HERE, never on
+    //   free slot. Allocation (the AudioBuffer copy) happens HERE, never on
     //   the audio thread.
     // clearTransientSample: UI thread. Publishes an empty slot (length 0).
     //--------------------------------------------------------------------------
@@ -145,6 +169,12 @@ private:
     // Voice activation: total kick duration in samples (from envelope params)
     int computeTotalSamples() const noexcept;
 
+    // Triple-buffer slot pickers — UI THREAD ONLY. Returns a slot that is
+    // neither the active one nor the live voice's snapshot (see the protocol
+    // comment above). With 3 slots and 2 exclusions one always exists.
+    int pickFreeLutSlot() const noexcept;
+    int pickFreeSampleSlot() const noexcept;
+
     //--------------------------------------------------------------------------
     KickParams params {};
     double sampleRate = 44100.0;
@@ -156,7 +186,12 @@ private:
 
     double phase = 0.0;              // sine phase accumulator (double precision)
     int    sampleSinceTrigger = 0;
-    int    totalSamples = 0;
+    int    totalSamples = 0;         // envelope duration in samples — normalizes the drive ramp
+    // A5: end-of-voice sample count. Equals totalSamples except in Sample click
+    // mode with a loaded sample, where the voice must outlive the amp envelope
+    // so the sample plays its natural length instead of being hard-cut. Used
+    // ONLY for the end-of-voice check — never for the drive ramp or scoop.
+    int    voiceEndSamples = 0;
     float  velocity = 1.0f;
     float  pitchTransposeRatio = 1.0f;
 
@@ -189,28 +224,38 @@ private:
     std::vector<float> dryScratch;            // size = blockSize
     juce::AudioBuffer<float> overSampledBuf;  // size = blockSize × OSfactor, mono
 
-    // ---- Phase 6b: custom amp envelope LUT (double-buffered) ----
-    std::array<float, EnvCurve::kLutSize> ampLutA {};
-    std::array<float, EnvCurve::kLutSize> ampLutB {};
-    float                                 lutTotalMs[2] { 0.0f, 0.0f };
+    // ---- Phase 6b: custom amp envelope LUT (TRIPLE-buffered, see publishVolCurve) ----
+    std::array<std::array<float, EnvCurve::kLutSize>, 3> ampLuts {};
+    float                                 lutTotalMs[3] { 0.0f, 0.0f, 0.0f };
     std::atomic<int>                      activeLutIdx { 0 };
     std::atomic<bool>                     curveModeAtomic { false };
 
     // Voice-lifetime snapshot of curve state (so mid-voice UI edits don't glitch).
+    // voiceLutIdxAtomic is written by the audio thread at triggerNote (copy of
+    // activeLutIdx) and read by the UI thread's slot picker — see the protocol
+    // comment above. voiceLutTotalMs is audio-thread-only after the snapshot.
     bool  voiceUseCurve   = false;
-    int   voiceLutIdx     = 0;
+    std::atomic<int> voiceLutIdxAtomic { 0 };
     float voiceLutTotalMs = 0.0f;
 
-    // ---- v1.1: drag-a-WAV transient sample (double-buffered, mirrors the LUT) ----
-    juce::AudioBuffer<float> sampleSlotA, sampleSlotB;   // mono
-    double            sampleSourceRate[2] { 44100.0, 44100.0 };
-    int               sampleLength[2]     { 0, 0 };
+    // ---- v1.1: drag-a-WAV transient sample (TRIPLE-buffered, mirrors the LUT) ----
+    std::array<juce::AudioBuffer<float>, 3> sampleSlots;   // mono
+    double            sampleSourceRate[3] { 44100.0, 44100.0, 44100.0 };
+    int               sampleLength[3]     { 0, 0, 0 };
     std::atomic<int>  activeSampleIdx     { 0 };
 
     // Voice-lifetime snapshot of the sample slot + a read cursor (fractional, for
-    // SR-correct linear-interpolated playback). All snapshotted at triggerNote.
-    int    voiceSampleIdx    = 0;
+    // SR-correct linear-interpolated playback). voiceSampleIdxAtomic is written
+    // at triggerNote (copy of activeSampleIdx) and read by the UI slot picker;
+    // the rest are audio-thread-only after the snapshot.
+    std::atomic<int>  voiceSampleIdxAtomic { 0 };
     int    voiceSampleLength  = 0;
     double voiceSampleRate    = 44100.0;
     double samplePlayPos      = 0.0;
+
+    // ---- A9: output gain smoothing (~10 ms, linear in gain) ----
+    // Applied per-sample instead of as a per-block constant so automated gain
+    // changes don't zipper. reset()/prepare() set current AND target so
+    // constant-gain renders are bit-identical to the pre-smoothing behaviour.
+    juce::SmoothedValue<float> outputGainSmoothed;
 };

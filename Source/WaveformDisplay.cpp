@@ -56,13 +56,13 @@ WaveformDisplay::~WaveformDisplay()
 
 void WaveformDisplay::parameterChanged (const juce::String& id, float)
 {
+    // May be called from the audio thread (host automation): touch atomics
+    // ONLY — no allocations, no MessageManager posts (B6). The 30 Hz
+    // timerCallback consumes these flags on the message thread.
     dirty.store (true);
-    debounceCountdown = debounceTicks;
+    debounceCountdown.store (debounceTicks);
     if (id == "envelope_mode")
-    {
-        // Defer to the message thread — parameter listener may be called from audio thread.
-        juce::MessageManager::callAsync ([this] { updateBreakpointEditorVisibility(); });
-    }
+        envelopeModeChanged.store (true);
 }
 
 void WaveformDisplay::updateBreakpointEditorVisibility()
@@ -99,11 +99,17 @@ void WaveformDisplay::layoutBreakpointEditor()
 
 void WaveformDisplay::timerCallback()
 {
+    // 0. Envelope-mode flip flagged from (possibly) the audio thread — run the
+    //    editor show/hide here on the message thread (B6).
+    if (envelopeModeChanged.exchange (false))
+        updateBreakpointEditorVisibility();
+
     // 1. Debounce: if dirty, count down then render.
-    if (dirty.load() && debounceCountdown > 0)
+    if (dirty.load() && debounceCountdown.load() > 0)
     {
-        --debounceCountdown;
-        if (debounceCountdown == 0)
+        // fetch_sub returns the pre-decrement value; == 1 means this tick
+        // consumed the last one.
+        if (debounceCountdown.fetch_sub (1) == 1)
         {
             recomputeIfDirty();
             repaint();
@@ -709,7 +715,11 @@ void WaveformDisplay::paintWave (juce::Graphics& g, juce::Rectangle<float> bound
     if (processor.getEngine().isActive() || voiceWasActive)
     {
         const int playPos = processor.getEngine().getPlaybackSamplePos();
-        const float playMs = (float) playPos / 48.0f;   // approx, since realtime SR may differ
+        // Realtime engine sample position → ms via the ACTUAL realtime sample
+        // rate (B12: the old /48.0f assumed 48 kHz; guard the unprepared case).
+        const double liveSr = processor.getSampleRate();
+        const float srHz    = (liveSr > 0.0) ? (float) liveSr : 48000.0f;
+        const float playMs  = (float) playPos * 1000.0f / srHz;
         if (winMs > 0.0f && playMs <= winMs)
         {
             const float x = xForMs (playMs);

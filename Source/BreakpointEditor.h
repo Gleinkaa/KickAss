@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <vector>
 #include "PluginProcessor.h"
 #include "EnvCurve.h"
 
@@ -41,6 +42,16 @@ public:
 private:
     KickAssProcessor& processor;
 
+    // ----- Thread safety (B2) -----
+    // volEnvCurve is mutated from the message thread (these mouse handlers) and
+    // from setStateInformation — which hosts may call on a non-message thread —
+    // always under processor.getVolCurveLock(). Every read below takes a
+    // snapshot of the points under that lock and works on the copy; edits are
+    // computed on the copy and published back under the lock, so the critical
+    // section stays short and no read ever races a vector clear/push_back.
+    std::vector<EnvPoint> snapshotPoints() const;
+    void publishPoints (std::vector<EnvPoint>&& edited);
+
     // -1 if none. -2 means "tension drag from segment N" (decoded via dragTensionSeg).
     int  dragPointIdx     = -1;
     int  dragTensionSeg   = -1;
@@ -51,13 +62,15 @@ private:
     EnvPoint           pixelToPoint (juce::Point<float> px, float totalMs) const noexcept;
 
     // Returns index of point under cursor (within hit radius), else -1.
-    int hitPointIndex (juce::Point<float> px) const noexcept;
+    // Not noexcept: snapshots the points (heap copy under the lock).
+    int hitPointIndex (juce::Point<float> px) const;
     // Returns index of segment whose tension handle is under cursor, else -1.
-    int hitTensionHandle (juce::Point<float> px) const noexcept;
+    int hitTensionHandle (juce::Point<float> px) const;
 
     // Snapshot of the curve's totalMs after a drag, used to keep the back
     // point's x-position editable while the rest are clamped relative to it.
-    float currentTotalMs() const noexcept;
+    // Not noexcept: snapshots the points (heap copy under the lock).
+    float currentTotalMs() const;
 
     // After any edit: clamp, persist, repaint.
     void commitEdit();
