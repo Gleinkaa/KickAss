@@ -170,12 +170,65 @@ static void test_allMagsFiniteAndBelowZero()
 }
 
 //==============================================================================
+// Test 5 — impulse at index 0. The Hann window is zero at its first sample, so
+// such a signal has no windowed energy at all: the result must be empty, never
+// a bogus "flat 0 dB full-scale" spectrum (every bin at 0 dB because
+// normalization divides the -300 dB floor by itself).
+//==============================================================================
+static void test_impulseAtStart_noFlatFullScale()
+{
+    runHeader ("impulse at index 0 -> empty result, not a flat 0 dB spectrum");
+    const double sr = 48000.0;
+    const int    n  = 1000;                 // non-power-of-two: usable != fftSize
+
+    std::vector<float> v ((size_t) n, 0.0f);
+    v[0] = 1.0f;
+
+    auto r = kickass::computeSpectrum (v.data(), n, sr);
+
+    // Whatever comes back must not be a flat full-scale spectrum.
+    bool allFlatFullScale = ! r.magsDb.empty();
+    for (auto db : r.magsDb)
+        if (db < -1.0e-3f) { allFlatFullScale = false; break; }
+    REQUIRE_MSG (! allFlatFullScale, "flat 0 dB spectrum: every bin at full scale");
+
+    // Contract for a signal with no windowed energy: empty result.
+    REQUIRE_MSG (r.magsDb.empty(), "impulse at index 0 should give an empty result");
+}
+
+//==============================================================================
+// Test 6 — short (non-power-of-two) buffer: usable != fftSize, so the window
+// must span exactly the `usable` signal samples. A 1000 Hz sine still has to
+// peak at ~1000 Hz.
+//==============================================================================
+static void test_shortSinePeaksAtRightBin()
+{
+    runHeader ("1000 Hz sine, 1000 samples (usable != fftSize) -> peak within 2 bins of 1000 Hz");
+    const double sr = 48000.0;
+    const int    n  = 1000;
+
+    auto sig = makeSine (1000.0, sr, n);
+    auto r = kickass::computeSpectrum (sig.data(), n, sr);
+
+    REQUIRE_MSG (! r.magsDb.empty(), "empty result for a valid short sine");
+    REQUIRE_MSG (r.fftSize == 1024, "fftSize should be 1024 for 1000 samples, got "
+                 + juce::String (r.fftSize));
+
+    const int pk = peakBin (r);
+    REQUIRE_MSG (pk >= 0, "no peak bin found");
+    if (pk >= 0)
+        REQUIRE_NEAR ((double) pk * r.binHz, 1000.0, 2.0 * r.binHz);
+}
+
+//==============================================================================
 int main (int, char**)
 {
     test_sinePeakAt1000Hz();
     test_lowVsHighDistinctBins();
     test_zeroAndEmptyInput();
     test_allMagsFiniteAndBelowZero();
+    test_impulseAtStart_noFlatFullScale();
+    test_shortSinePeaksAtRightBin();
 
     if (g_failures == 0)
     {

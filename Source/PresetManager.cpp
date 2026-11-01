@@ -121,6 +121,26 @@ void PresetManager::applyParameterMap (const juce::NamedValueSet& kv)
 }
 
 //==============================================================================
+// B5 — full apply semantics: reset everything to defaults (except the
+// envelope-mode UI preference) BEFORE the preset's own parameter map lands.
+// Factory and JSON preset data only list a subset of the parameters; without
+// this, values the data doesn't mention keep whatever the user had — e.g.
+// Foldback saturation leaking into 'Psytrance (Default)'.
+//==============================================================================
+void PresetManager::resetParametersToDefaults()
+{
+    for (auto* p : processor.apvts.processor.getParameters())
+    {
+        if (auto* rap = dynamic_cast<juce::RangedAudioParameter*> (p))
+        {
+            if (rap->paramID == "envelope_mode")
+                continue;   // UI mode preference — survives preset applies
+            rap->setValueNotifyingHost (rap->getDefaultValue());
+        }
+    }
+}
+
+//==============================================================================
 bool PresetManager::applyFactory (int index)
 {
     if (index < 0 || index >= kFactoryCount) return false;
@@ -152,6 +172,7 @@ bool PresetManager::applyFactory (int index)
     kv.set ("invert_phase", fp.invert_phase);
     kv.set ("output_gain",  fp.output_gain);
     kv.set ("pitch_track",  fp.pitch_track);
+    resetParametersToDefaults();   // B5: full apply — unlisted params go to defaults
     applyParameterMap (kv);
     // Phase 6b: factory presets don't ship breakpoint curves yet — rebuild from
     // the freshly-applied AHDSR knobs so Advanced-mode users still hear the preset.
@@ -190,10 +211,16 @@ bool PresetManager::loadKickPreset (const juce::File& file)
     {
         if (xml->hasTagName (processor.apvts.state.getType()))
         {
-            processor.apvts.replaceState (juce::ValueTree::fromXml (*xml));
+            auto stateTree = juce::ValueTree::fromXml (*xml);
+            processor.removeNonFiniteParameterChildren (stateTree);   // B9
+            processor.apvts.replaceState (stateTree);
             // Phase 6b: same restore path as setStateInformation — handles both
             // new presets (with <Curves>) and old presets (rebuild from AHDSR).
             processor.restoreVolCurveFromStateOrAhdsr();
+            // B3: a preset load swaps the WHOLE state — the transient-sample
+            // layer must swap with it (load the preset's <Sample>, or clear
+            // the slot if the preset has none).
+            processor.restoreTransientSampleFromState();
             return true;
         }
     }
@@ -227,6 +254,7 @@ bool PresetManager::loadJson (const juce::File& file)
     juce::var v = juce::JSON::parse (file);
     if (auto* obj = v.getDynamicObject())
     {
+        resetParametersToDefaults();   // B5: full apply — unlisted params go to defaults
         applyParameterMap (obj->getProperties());
         // Phase 6b: Python JSON has no curve data — rebuild from the AHDSR knobs
         // we just loaded so Advanced-mode users still hear the JSON preset.

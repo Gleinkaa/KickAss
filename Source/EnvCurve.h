@@ -171,6 +171,16 @@ public:
             points.push_back ({ minTotalMs, 0.0f, 0.0f });
             return;
         }
+        // Sanitize non-finite fields BEFORE sorting: a corrupt state (e.g. a Pt
+        // with t="nan") would otherwise make getTotalMs() NaN, so the LUT is
+        // never filled and the voice never ends. std::sort's strict-weak-order
+        // comparator is also undefined behaviour when a key is NaN.
+        for (auto& p : points)
+        {
+            if (! std::isfinite (p.timeMs))  p.timeMs  = 0.0f;
+            if (! std::isfinite (p.value))   p.value   = 0.0f;
+            if (! std::isfinite (p.tension)) p.tension = 0.0f;
+        }
         // Lock first point time and last point value.
         points.front().timeMs = 0.0f;
         points.back ().value  = 0.0f;

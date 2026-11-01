@@ -11,6 +11,11 @@ if(NOT DEFINED JUCE_DIR)
     set(JUCE_DIR "C:/Users/glein/JUCE" CACHE PATH "Path to JUCE source root")
 endif()
 
+# Fail early with a usable message instead of a cryptic add_subdirectory error.
+if(NOT EXISTS "${JUCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "JUCE not found at ${JUCE_DIR} - pass -DJUCE_DIR=/path/to/JUCE")
+endif()
+
 add_subdirectory(${JUCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
 
 # Per-OS plugin format matrix (ARCHITECTURE §8b)

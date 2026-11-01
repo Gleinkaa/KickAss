@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <atomic>
 #include "PluginProcessor.h"
 #include "KickAssLookAndFeel.h"
 #include "WaveformDisplay.h"
@@ -128,8 +129,30 @@ private:
     juce::Label      modifiedDot { {}, "*" };   // shows when current state diverges from last-loaded preset
 
     // Modified-since-load tracking
-    bool isPresetModified           = false;
-    bool suppressModificationDetect = false;
+    bool isPresetModified = false;
+    // True while a programmatic bulk apply (preset load / A-B swap) is pushing
+    // a burst of parameter changes; parameterChanged checks it AT FIRE TIME to
+    // decide whether the change counts as a user edit. Atomic because
+    // parameterChanged may fire on the audio thread (B6).
+    std::atomic<bool> suppressModificationDetect { false };
+
+    // B6: parameterChanged must not allocate or post messages (it can fire on
+    // the audio thread under automation), so it only raises these atomic
+    // flags; paramFlagPoll (below) consumes them on the message thread.
+    std::atomic<bool> envelopeModeChanged { false };  // → syncEnvelopeModeUI
+    std::atomic<bool> paramUiDirty        { false };  // genuine change → mark modified + undo refresh
+    std::atomic<bool> undoUiDirty         { false };  // programmatic change → undo refresh only
+
+    // Message-thread consumer for the flags above (always running, unlike the
+    // Auto Play Timer which only runs while AUTO is engaged).
+    void pollParameterUiFlags();
+    struct ParamFlagPollTimer : public juce::Timer
+    {
+        explicit ParamFlagPollTimer (KickAssEditor& e) : owner (e) {}
+        void timerCallback() override { owner.pollParameterUiFlags(); }
+        KickAssEditor& owner;
+    };
+    ParamFlagPollTimer paramFlagPoll { *this };
 
     // AMP panel header — Phase 6b envelope mode segmented control
     juce::TextButton modeSimpleBtn   { "Simple" };
@@ -198,6 +221,7 @@ private:
     // Phase 8 — modified-preset indicator
     void clearPresetModifiedFlag();                // call after preset apply / save
     void markPresetModified();                     // any APVTS change while not suppressed
+    void setPresetModifiedState (bool modified);   // set/clear + drop pending flags (B7)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KickAssEditor)
 };

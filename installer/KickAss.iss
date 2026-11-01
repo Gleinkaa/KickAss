@@ -21,7 +21,8 @@
 #define MyAppURL         "https://github.com/Gleinkaa/KickAss"
 #define MyAppExeName     "KickAss.exe"
 
-; Marketing version (the CMake project version trails at 0.1.x — bump there when tagging).
+; Marketing version — keep in sync with the CMake project version
+; (CMakeLists.txt `project(KickAss VERSION ...)`, currently 1.1.0).
 #ifndef MyAppVersion
   #define MyAppVersion "1.1.0"
 #endif

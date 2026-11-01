@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<Parameters>
+  <PARAM id="click_decay" value="5.0"/>
+  <PARAM id="click_hpf" value="800.0000610351562"/>
+  <PARAM id="click_tone" value="10000.0"/>
+  <PARAM id="click_type" value="0.0"/>
+  <PARAM id="click_vol" value="0.0"/>
+  <PARAM id="drive" value="1.0"/>
+  <PARAM id="end_freq" value="41.19999694824219"/>
+  <PARAM id="envelope_mode" value="1.0"/>
+  <PARAM id="invert_phase" value="1.0"/>
+  <PARAM id="mid_freq" value="324.0"/>
+  <PARAM id="output_gain" value="4.600000381469727"/>
+  <PARAM id="phase_offset" value="358.0"/>
+  <PARAM id="pitch_curve" value="5.400000095367432"/>
+  <PARAM id="pitch_track" value="0.0"/>
+  <PARAM id="safety_limit" value="1.0"/>
+  <PARAM id="sat_type" value="2.0"/>
+  <PARAM id="scoop_depth" value="0.0"/>
+  <PARAM id="scoop_length" value="30.00000190734863"/>
+  <PARAM id="scoop_start" value="9.999999046325684"/>
+  <PARAM id="start_freq" value="3474.0"/>
+  <PARAM id="sweep_time_1" value="11.60000038146973"/>
+  <PARAM id="sweep_time_2" value="143.0"/>
+  <PARAM id="tail_drive" value="0.0"/>
+  <PARAM id="vol_attack" value="1.99999988079071"/>
+  <PARAM id="vol_curve" value="3.0"/>
+  <PARAM id="vol_decay_1" value="49.99999618530273"/>
+  <PARAM id="vol_decay_2" value="150.0000152587891"/>
+  <PARAM id="vol_hold" value="9.999999046325684"/>
+  <PARAM id="vol_sustain" value="40.0"/>
+  <Curves>
+    <Curve id="vol_env" mode="custom">
+      <Pt t="0.0" v="0.6576407551765442" tn="0.0"/>
+      <Pt t="0.4000000059604645" v="0.5367969274520874" tn="0.0"/>
+      <Pt t="1.200000047683716" v="0.4473854601383209" tn="0.0"/>
+      <Pt t="2.5" v="0.3323017656803131" tn="0.0"/>
+      <Pt t="4.5" v="0.2283089458942413" tn="0.0"/>
+      <Pt t="7.5" v="0.1574773788452148" tn="0.0"/>
+      <Pt t="11.5" v="0.1288242489099503" tn="0.0"/>
+      <Pt t="16.0" v="0.1508017331361771" tn="0.0"/>
+      <Pt t="22.0" v="0.2444770485162735" tn="0.0"/>
+      <Pt t="30.0" v="0.4173702001571655" tn="0.0"/>
+      <Pt t="40.0" v="0.5630512833595276" tn="0.0"/>
+      <Pt t="52.0" v="0.6283730864524841" tn="0.0"/>
+      <Pt t="100.0" v="0.5525044202804565" tn="0.0"/>
+      <Pt t="150.0" v="0.3828043043613434" tn="0.0"/>
+      <Pt t="180.0" v="0.1807976961135864" tn="0.0"/>
+      <Pt t="197.3684234619141" v="0.0" tn="0.0"/>
+    </Curve>
+  </Curves>
+</Parameters>

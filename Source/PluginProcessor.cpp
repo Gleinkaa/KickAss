@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <cmath>
 #ifndef KICKASS_HEADLESS_TESTS
  #include "PluginEditor.h"
 #endif
@@ -64,71 +65,78 @@ KickAssProcessor::createParameterLayout()
 
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
+    // Names read "Group · Label". The dot is non-ASCII, and a plain char* literal becomes a
+    // juce::String as Latin-1 ("Â·" in hosts), so it goes through fromUTF8.
+    const auto nm = [] (const char* group, const char* label)
+    {
+        return juce::String (group) + juce::String::fromUTF8 (" \xc2\xb7 ") + label;
+    };
+
     // ---- PITCH ----
-    params.push_back (std::make_unique<AF> (PID { "start_freq", VER }, "Pitch · Start",
+    params.push_back (std::make_unique<AF> (PID { "start_freq", VER }, nm ("Pitch", "Start"),
         rangeSkewed (100.0f, 15000.0f, 1.0f, 0.30f), 8000.0f,
         attrs (fmtHz)));
 
-    params.push_back (std::make_unique<AF> (PID { "mid_freq", VER }, "Pitch · Mid",
+    params.push_back (std::make_unique<AF> (PID { "mid_freq", VER }, nm ("Pitch", "Mid"),
         rangeSkewed (50.0f, 1000.0f, 1.0f, 0.30f), 150.0f,
         attrs (fmtHz)));
 
-    params.push_back (std::make_unique<AF> (PID { "end_freq", VER }, "Pitch · End",
+    params.push_back (std::make_unique<AF> (PID { "end_freq", VER }, nm ("Pitch", "End"),
         rangeSkewed (20.0f, 100.0f, 0.01f, 0.50f), 46.25f,
         attrs (fmtHz)));
 
-    params.push_back (std::make_unique<AF> (PID { "sweep_time_1", VER }, "Pitch · Sweep 1",
+    params.push_back (std::make_unique<AF> (PID { "sweep_time_1", VER }, nm ("Pitch", "Sweep 1"),
         rangeSkewed (0.1f, 50.0f, 0.1f, 0.30f), 10.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "sweep_time_2", VER }, "Pitch · Sweep 2",
+    params.push_back (std::make_unique<AF> (PID { "sweep_time_2", VER }, nm ("Pitch", "Sweep 2"),
         rangeSkewed (1.0f, 250.0f, 0.5f, 0.30f), 80.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "pitch_curve", VER }, "Pitch · Curve",
+    params.push_back (std::make_unique<AF> (PID { "pitch_curve", VER }, nm ("Pitch", "Curve"),
         rangeSkewed (0.1f, 10.0f, 0.1f, 0.50f), 3.0f,
         attrs (fmtRatio)));
 
     // ---- AMP ----
-    params.push_back (std::make_unique<AF> (PID { "vol_attack", VER }, "Amp · Attack",
+    params.push_back (std::make_unique<AF> (PID { "vol_attack", VER }, nm ("Amp", "Attack"),
         rangeSkewed (0.0f, 30.0f, 0.1f, 0.50f), 2.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "vol_hold", VER }, "Amp · Hold",
+    params.push_back (std::make_unique<AF> (PID { "vol_hold", VER }, nm ("Amp", "Hold"),
         rangeSkewed (0.0f, 50.0f, 0.1f, 0.50f), 10.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "vol_decay_1", VER }, "Amp · Decay 1",
+    params.push_back (std::make_unique<AF> (PID { "vol_decay_1", VER }, nm ("Amp", "Decay 1"),
         rangeSkewed (0.0f, 150.0f, 0.5f, 0.50f), 50.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "vol_sustain", VER }, "Amp · Sustain",
+    params.push_back (std::make_unique<AF> (PID { "vol_sustain", VER }, nm ("Amp", "Sustain"),
         juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f), 40.0f,
         attrs (fmtPct)));
 
-    params.push_back (std::make_unique<AF> (PID { "vol_decay_2", VER }, "Amp · Decay 2",
+    params.push_back (std::make_unique<AF> (PID { "vol_decay_2", VER }, nm ("Amp", "Decay 2"),
         rangeSkewed (0.0f, 700.0f, 1.0f, 0.50f), 150.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "vol_curve", VER }, "Amp · Curve",
+    params.push_back (std::make_unique<AF> (PID { "vol_curve", VER }, nm ("Amp", "Curve"),
         rangeSkewed (0.1f, 10.0f, 0.1f, 0.50f), 3.0f,
         attrs (fmtRatio)));
 
     // ---- SCOOP ----
-    params.push_back (std::make_unique<AF> (PID { "scoop_start", VER }, "Scoop · Start",
+    params.push_back (std::make_unique<AF> (PID { "scoop_start", VER }, nm ("Scoop", "Start"),
         rangeSkewed (0.0f, 50.0f, 0.1f, 0.50f), 10.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "scoop_length", VER }, "Scoop · Length",
+    params.push_back (std::make_unique<AF> (PID { "scoop_length", VER }, nm ("Scoop", "Length"),
         rangeSkewed (1.0f, 100.0f, 0.5f, 0.50f), 30.0f,
         attrs (fmtMs)));
 
-    params.push_back (std::make_unique<AF> (PID { "scoop_depth", VER }, "Scoop · Depth",
+    params.push_back (std::make_unique<AF> (PID { "scoop_depth", VER }, nm ("Scoop", "Depth"),
         juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f), 0.0f,
         attrs (fmtPct)));
 
     // ---- TRANSIENT ----
-    params.push_back (std::make_unique<AF> (PID { "click_vol", VER }, "Transient · Vol",
+    params.push_back (std::make_unique<AF> (PID { "click_vol", VER }, nm ("Transient", "Vol"),
         juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
         juce::AudioParameterFloatAttributes()
             .withCategory (AF::genericParameter)
@@ -136,59 +144,59 @@ KickAssProcessor::createParameterLayout()
                 [] (float v, int) { return juce::String (juce::roundToInt (v * 100.0f)) + " %"; })));
 
     // "Sample" appended at index 3 so existing presets/indices (Sine/Noise/Both) are unchanged.
-    params.push_back (std::make_unique<ACh> (PID { "click_type", VER }, "Transient · Source",
+    params.push_back (std::make_unique<ACh> (PID { "click_type", VER }, nm ("Transient", "Source"),
         juce::StringArray { "Sine", "Noise", "Both", "Sample" }, 0));
 
-    params.push_back (std::make_unique<AF> (PID { "click_hpf", VER }, "Transient · HPF",
+    params.push_back (std::make_unique<AF> (PID { "click_hpf", VER }, nm ("Transient", "HPF"),
         rangeSkewed (200.0f, 4000.0f, 1.0f, 0.30f), 800.0f,
         attrs (fmtHz)));
 
-    params.push_back (std::make_unique<AF> (PID { "click_tone", VER }, "Transient · Tone",
+    params.push_back (std::make_unique<AF> (PID { "click_tone", VER }, nm ("Transient", "Tone"),
         rangeSkewed (2000.0f, 16000.0f, 1.0f, 0.30f), 10000.0f,
         attrs (fmtHz)));
 
-    params.push_back (std::make_unique<AF> (PID { "click_decay", VER }, "Transient · Decay",
+    params.push_back (std::make_unique<AF> (PID { "click_decay", VER }, nm ("Transient", "Decay"),
         rangeSkewed (1.0f, 30.0f, 0.1f, 0.50f), 5.0f,
         attrs (fmtMs)));
 
     // ---- DRIVE ----
-    params.push_back (std::make_unique<AF> (PID { "drive", VER }, "Drive · Base",
+    params.push_back (std::make_unique<AF> (PID { "drive", VER }, nm ("Drive", "Base"),
         rangeSkewed (1.0f, 10.0f, 0.1f, 0.50f), 1.5f,
         attrs (fmtRatio)));
 
-    params.push_back (std::make_unique<AF> (PID { "tail_drive", VER }, "Drive · Tail",
+    params.push_back (std::make_unique<AF> (PID { "tail_drive", VER }, nm ("Drive", "Tail"),
         rangeSkewed (0.0f, 10.0f, 0.1f, 0.50f), 0.0f,
         attrs (fmtRatio)));
 
     // Saturation flavour. Default Tanh (index 0) = the v1.0 character, so existing
     // presets render bit-for-bit identically until the user picks another mode.
-    params.push_back (std::make_unique<ACh> (PID { "sat_type", VER }, "Drive · Type",
+    params.push_back (std::make_unique<ACh> (PID { "sat_type", VER }, nm ("Drive", "Type"),
         juce::StringArray { "Tanh", "Soft Clip", "Hard Clip", "Tube", "Foldback" }, 0));
 
     // ---- MASTER ----
-    params.push_back (std::make_unique<AB> (PID { "invert_phase", VER }, "Master · Invert Phase", false));
+    params.push_back (std::make_unique<AB> (PID { "invert_phase", VER }, nm ("Master", "Invert Phase"), false));
 
-    params.push_back (std::make_unique<AB> (PID { "safety_limit", VER }, "Master · Safety", true));
+    params.push_back (std::make_unique<AB> (PID { "safety_limit", VER }, nm ("Master", "Safety"), true));
 
-    params.push_back (std::make_unique<AF> (PID { "output_gain", VER }, "Master · Output",
+    params.push_back (std::make_unique<AF> (PID { "output_gain", VER }, nm ("Master", "Output"),
         juce::NormalisableRange<float> (-24.0f, 6.0f, 0.1f), 0.0f,
         attrs (fmtDb)));
 
-    params.push_back (std::make_unique<AF> (PID { "pitch_track", VER }, "Master · Pitch Track",
+    params.push_back (std::make_unique<AF> (PID { "pitch_track", VER }, nm ("Master", "Pitch Track"),
         juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f), 0.0f,
         attrs (fmtPct)));
 
-    params.push_back (std::make_unique<AF> (PID { "phase_offset", VER }, "Master · Phase Offset",
+    params.push_back (std::make_unique<AF> (PID { "phase_offset", VER }, nm ("Master", "Phase Offset"),
         juce::NormalisableRange<float> (0.0f, 360.0f, 1.0f), 0.0f,
         juce::AudioParameterFloatAttributes()
             .withCategory (AF::genericParameter)
             .withStringFromValueFunction (
-                [] (float v, int) { return juce::String (juce::roundToInt (v)) + " °"; })));
+                [] (float v, int) { return juce::String (juce::roundToInt (v)) + juce::String::fromUTF8 (" \xc2\xb0"); })));  // " °"
 
     // ---- GLOBAL ENVELOPE MODE (Phase 6b) ----
     // 0 = Simple (AHDSR knobs drive DSP), 1 = Advanced (custom breakpoint curve drives DSP).
     // Default Advanced per user choice — breakpoint editor visible immediately.
-    params.push_back (std::make_unique<ACh> (PID { "envelope_mode", VER }, "Envelope · Mode",
+    params.push_back (std::make_unique<ACh> (PID { "envelope_mode", VER }, nm ("Envelope", "Mode"),
         juce::StringArray { "Simple", "Advanced" }, 1));
 
     return { params.begin(), params.end() };
@@ -303,10 +311,21 @@ void KickAssProcessor::readParamsIntoEngine()
 //==============================================================================
 void KickAssProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    engine.prepare (sampleRate, samplesPerBlock);
-    // Offline engine runs at a fixed 48k for stable visualizer output across DAW SR changes.
-    offlineEngine.prepare (48000.0, 4096);
+    // R1: read the CURRENT parameter values BEFORE prepare(). prepare() ends
+    // in reset(), which snaps the output-gain smoother to params.outputGainDb
+    // — with the old order reset() snapped to whatever the engine held from
+    // before (constructor defaults on first call, previous values on a
+    // re-prepare), and the first ~10 ms of the next kick ramped from it.
+    // readParamsIntoEngine() only loads cached APVTS atomics (bound in the
+    // constructor) and copies them into the engine — it does not depend on
+    // prepare() having run.
     readParamsIntoEngine();
+    engine.prepare (sampleRate, samplesPerBlock);
+    // NOTE (A10): do NOT prepare offlineEngine here. prepareToPlay may be called
+    // by the host on a background thread while the message thread is rendering
+    // with offlineEngine — preparing here would race the visualizer path.
+    // renderOffline() self-prepares on first use and on any sample-rate change,
+    // so the offline engine is only ever touched from the message thread.
     // Report oversampler latency to the host for PDC compensation.
     setLatencySamples (engine.getLatencySamples());
 }
@@ -332,22 +351,39 @@ void KickAssProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
     readParamsIntoEngine();
 
-    // Drain UI→audio trigger queue (lock-free single-slot).
+    const int numSamples = buffer.getNumSamples();
+
+    // Drain UI→audio trigger queue (lock-free single-slot). This trigger is a
+    // UI "preview" request with no sample position, so it fires at block start
+    // (offset 0) by design.
     const int note = pendingNote.exchange (-1, std::memory_order_acquire);
     if (note >= 0)
         engine.triggerNote (note, pendingVelocity.load (std::memory_order_relaxed), 0);
 
-    // Sample-accurate MIDI handling
+    // A2 fix — sample-accurate MIDI note-ons. The old code triggered every
+    // note-on at the block start, quantizing onsets to the buffer size (up to
+    // ~10 ms jitter at typical settings). Now the block is rendered in
+    // segments between note-on events: render [pos, evPos), trigger exactly at
+    // evPos (the voice starts on the next rendered sample), then continue.
+    // applyPostStages derives the drive ramp from sampleSinceTrigger per
+    // sub-block, so sub-ranges are safe, and renderBlock early-returns while
+    // the voice is inactive, making pre-trigger segments free.
+    int pos = 0;
     for (const auto meta : midi)
     {
         const auto& msg = meta.getMessage();
-        if (msg.isNoteOn())
-            engine.triggerNote (msg.getNoteNumber(),
-                                msg.getFloatVelocity(),
-                                meta.samplePosition);
-    }
+        if (! msg.isNoteOn())
+            continue;
 
-    engine.renderBlock (buffer, 0, buffer.getNumSamples());
+        const int evPos = juce::jlimit (0, numSamples, meta.samplePosition);
+        if (evPos > pos)
+        {
+            engine.renderBlock (buffer, pos, evPos - pos);
+            pos = evPos;
+        }
+        engine.triggerNote (msg.getNoteNumber(), msg.getFloatVelocity(), 0);
+    }
+    engine.renderBlock (buffer, pos, numSamples - pos);
 }
 
 //==============================================================================
@@ -373,22 +409,11 @@ void KickAssProcessor::setStateInformation (const void* data, int sizeInBytes)
     {
         if (xml->hasTagName (apvts.state.getType()))
         {
-            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+            auto stateTree = juce::ValueTree::fromXml (*xml);
+            removeNonFiniteParameterChildren (stateTree);   // B9: NaN/Inf PARAM values
+            apvts.replaceState (stateTree);
             restoreVolCurveFromStateOrAhdsr();
-
-            // v1.1: path-based transient-sample restore. If the stored path is
-            // still readable, reload it; otherwise leave the slot empty (the
-            // <Sample> node is preserved so a later session on the original
-            // machine can still resolve it). Embedding raw audio is deferred.
-            const juce::String samplePath = getTransientSamplePath();
-            if (samplePath.isNotEmpty())
-            {
-                juce::File f (samplePath);
-                if (f.existsAsFile())
-                    loadTransientSampleFile (f);
-                else
-                    clearTransientSample();   // also drops the dead node
-            }
+            restoreTransientSampleFromState();              // B3/B4: swap the sample layer too
         }
     }
 }
@@ -502,17 +527,37 @@ bool KickAssProcessor::loadTransientSampleFile (const juce::File& file)
     if (numSamples <= 0 || numCh <= 0)
         return false;
 
+    // A7 fix — hard cap + sanitize BEFORE publishing. A single NaN/Inf sample
+    // (a corrupt or malicious float WAV) would otherwise poison the click
+    // HPF/LPF, the oversampler and the DC blocker state PERMANENTLY: those are
+    // recursive filters, so one bad value never rings out. Cap the read at
+    // 10 s at the source rate (memory + DSP sanity), replace non-finite
+    // samples with silence, and clamp survivors into a sane amplitude band.
+    const int maxSamples = (int) std::ceil (10.0 * srcRate);
+    const int readLen    = juce::jmin (numSamples, maxSamples);
+
     // Read into a multi-channel buffer, then sum to mono.
-    juce::AudioBuffer<float> raw (numCh, numSamples);
-    if (! reader->read (&raw, 0, numSamples, 0, true, true))
+    juce::AudioBuffer<float> raw (numCh, readLen);
+    if (! reader->read (&raw, 0, readLen, 0, true, true))
         return false;
 
-    juce::AudioBuffer<float> mono (1, numSamples);
+    juce::AudioBuffer<float> mono (1, readLen);
     mono.clear();
     for (int ch = 0; ch < numCh; ++ch)
-        mono.addFrom (0, 0, raw, ch, 0, numSamples);
+        mono.addFrom (0, 0, raw, ch, 0, readLen);
     if (numCh > 1)
         mono.applyGain (1.0f / (float) numCh);   // average so a stereo file isn't 2x louder
+
+    {
+        float* d = mono.getWritePointer (0);
+        for (int i = 0; i < readLen; ++i)
+        {
+            float v = d[i];
+            if (! std::isfinite (v))           // NaN / ±Inf → silence
+                v = 0.0f;
+            d[i] = juce::jlimit (-4.0f, 4.0f, v);   // clamp absurd-but-finite spikes
+        }
+    }
 
     // Publish to both engines (lock-free flip; the copy happens inside publish).
     engine       .publishTransientSample (mono, srcRate);
@@ -546,6 +591,135 @@ juce::String KickAssProcessor::getTransientSamplePath() const
     if (sampleNode.isValid())
         return sampleNode.getProperty ("path").toString();
     return {};
+}
+
+void KickAssProcessor::restoreTransientSampleFromState()
+{
+    const juce::String samplePath = getTransientSamplePath();
+    if (samplePath.isNotEmpty())
+    {
+        juce::File f (samplePath);
+        // loadTransientSampleFile re-publishes to BOTH engines and re-writes
+        // the node's path property (same value) — that's fine here.
+        if (f.existsAsFile() && loadTransientSampleFile (f))
+            return;
+    }
+
+    // No <Sample> node, empty path, or a missing/unreadable file: clear ONLY
+    // the engines (B3 — a state swap must not leave the previous patch's
+    // sample playing) and keep the <Sample> node itself (B4 — a project opened
+    // on a machine where the file is absent must not destroy the path; the
+    // node survives the next save and resolves again where the file exists).
+    engine       .clearTransientSample();
+    offlineEngine.clearTransientSample();
+}
+
+void KickAssProcessor::removeNonFiniteParameterChildren (juce::ValueTree& stateTree)
+{
+    for (int i = stateTree.getNumChildren(); --i >= 0;)
+    {
+        const auto child = stateTree.getChild (i);
+        if (! child.hasType ("PARAM"))
+            continue;
+
+        // var → double covers every storage type: a String attribute such as
+        // "nan" or "inf" goes through JUCE's readDoubleValue (which parses
+        // those to NaN / ±Inf), int/bool/double vars convert natively, and a
+        // missing property is the void var (converts to 0 — finite).
+        if (! std::isfinite ((double) child.getProperty ("value")))
+            stateTree.removeChild (i, nullptr);
+    }
+}
+
+//==============================================================================
+// B7 — undo-preserving state swap (A/B compare).
+//
+// AudioProcessorValueTreeState::replaceState() calls undoManager->clearUndoHistory(),
+// so the A/B toggle used to wipe the undo stack on every press. This applies a
+// snapshot state to the live APVTS inside ONE UndoManager transaction instead:
+// the swap itself is a single undo step, edits made before the toggle remain
+// undoable, and undoing the swap also restores the <Curves>/<Sample> children
+// (the pre-B7 replaceState path could never do that — it was all-or-nothing).
+void KickAssProcessor::applyStatePreservingUndo (const juce::ValueTree& newState)
+{
+    // Message-thread only: pushes parameter values to the host and mutates
+    // apvts.state (the editor's doToggleAB is the only caller).
+    jassert (juce::MessageManager::existsAndIsCurrentThread());
+
+    // Flush any in-flight parameter edits into their OWN transaction first (the
+    // GUI normally relies on APVTS's 10 Hz flush timer). This also syncs
+    // apvts.state's PARAM "value" properties with the live parameters, so the
+    // undo actions recorded below capture the true pre-swap values.
+    (void) apvts.copyState();
+
+    // ONE undo transaction for the whole swap. beginNewTransaction() only
+    // marks the boundary — the first recorded mutation after this line opens
+    // the named transaction and everything else in this function joins it,
+    // exactly like the per-gesture brackets the editor uses around knob
+    // drags (see the click_type path) and undo() itself.
+    undoManager.beginNewTransaction ("A/B swap");
+
+    // ---- 1) Parameters ------------------------------------------------------
+    // Push each value out of newState into the live parameter. The <PARAM>
+    // children of a copyState() snapshot hold the DENORMALISED value in their
+    // "value" property (verified against copyState() output: JUCE 8's
+    // ParameterAdapter::flushToTree writes unnormalisedValue, and setNewState
+    // reads it back as denormalised). A parameter with no child in newState
+    // goes to its default. apvts.state's own PARAM children are left alone —
+    // APVTS owns them and flushes the new values in itself (below).
+    for (auto* param : apvts.processor.getParameters())
+    {
+        auto* rap = dynamic_cast<juce::RangedAudioParameter*> (param);
+        if (rap == nullptr)
+            continue;
+
+        const float defaultDenormalised = rap->convertFrom0to1 (rap->getDefaultValue());
+
+        juce::ValueTree paramChild;   // the <PARAM id="..."> child in newState
+        for (int i = 0; i < newState.getNumChildren(); ++i)
+        {
+            const auto child = newState.getChild (i);
+            if (child.hasType ("PARAM")
+                && child.getProperty ("id").toString() == rap->paramID)
+            {
+                paramChild = child;
+                break;
+            }
+        }
+
+        const float denormalised = paramChild.isValid()
+            ? (float) paramChild.getProperty ("value", defaultDenormalised)
+            : defaultDenormalised;
+
+        rap->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, rap->convertTo0to1 (denormalised)));
+    }
+
+    // copyState() flushes the new parameter values into apvts.state's PARAM
+    // children with the undo manager attached, recording them inside the open
+    // "A/B swap" transaction (headless callers have no 10 Hz timer to do it
+    // later). Without this the swap would not be on the undo stack yet.
+    (void) apvts.copyState();
+
+    // ---- 2) Non-PARAM children the A/B slots swap: <Curves> and <Sample> ----
+    // Remove the live child (recorded), then append a COPY of the target's
+    // child (recorded) — a copy, never the slot's own tree, so later edits of
+    // apvts.state cannot alias a stored slot. The parameter children are not
+    // touched — they are owned by APVTS.
+    for (const auto& tag : { juce::Identifier ("Curves"), juce::Identifier ("Sample") })
+    {
+        const auto existing = apvts.state.getChildWithName (tag);
+        if (existing.isValid())
+            apvts.state.removeChild (existing, &undoManager);
+
+        const auto incoming = newState.getChildWithName (tag);
+        if (incoming.isValid())
+            apvts.state.appendChild (incoming.createCopy(), &undoManager);
+    }
+
+    // ---- 3) Make the engines match the swapped state (same pair of calls as
+    // setStateInformation; neither records anything onto the undo stack).
+    restoreVolCurveFromStateOrAhdsr();
+    restoreTransientSampleFromState();
 }
 
 //==============================================================================
@@ -622,17 +796,38 @@ void KickAssProcessor::restoreVolCurveFromStateOrAhdsr()
             if (c.getType().toString() == "Curve"
                 && c.getProperty ("id").toString() == "vol_env")
             {
+                // B10: a curve with fewer than 2 usable <Pt> children is
+                // corrupt or a placeholder. clampToInvariants() would
+                // silently turn it into a flat-zero 2-point curve →
+                // permanent silence in Advanced mode. Fall through to the
+                // AHDSR rebuild instead.
+                int validPts = 0;
+                for (int k = 0; k < c.getNumChildren(); ++k)
                 {
-                    juce::SpinLock::ScopedLockType l (volCurveLock);
-                    volEnvCurve.fromValueTree (c);
-                    volEnvCurve.clampToInvariants();
+                    auto pt = c.getChild (k);
+                    if (pt.hasType ("Pt")
+                        && std::isfinite ((float) pt.getProperty ("t", 0.0f))
+                        && std::isfinite ((float) pt.getProperty ("v", 0.0f)))
+                        ++validPts;
                 }
-                publishVolCurveToEngines();
-                return;   // mode attribute (if any) preserved as-is
+
+                if (validPts >= 2)
+                {
+                    {
+                        juce::SpinLock::ScopedLockType l (volCurveLock);
+                        volEnvCurve.fromValueTree (c);
+                        volEnvCurve.clampToInvariants();
+                    }
+                    publishVolCurveToEngines();
+                    return;   // mode attribute (if any) preserved as-is
+                }
+
+                break;   // degenerate vol_env node → AHDSR rebuild below
             }
         }
     }
-    // No curve in state (old preset, or freshly-applied factory that only set knobs).
+    // No usable curve in state (old preset, degenerate node, or a freshly
+    // applied factory that only set knobs).
     rebuildVolCurveFromAhdsr();
     syncVolCurveToValueTree();   // publishes for us
     setVolCurveMode ("ahdsr");

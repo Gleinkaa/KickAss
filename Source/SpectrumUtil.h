@@ -69,20 +69,34 @@ namespace kickass
         // performFrequencyOnlyForwardTransform.
         std::vector<float> fftData ((size_t) fftSize * 2, 0.0f);
 
+        // Window over the real signal length (usable), NOT the zero-padded FFT
+        // length: a Hann taper stretched across the padding under-tapers the
+        // tail of the real samples and shifts energy into the wrong bins.
         juce::dsp::WindowingFunction<float> window (
-            (size_t) fftSize, juce::dsp::WindowingFunction<float>::hann);
+            (size_t) usable, juce::dsp::WindowingFunction<float>::hann);
 
         for (int i = 0; i < usable; ++i)
         {
             const float s = samples[i];
             fftData[(size_t) i] = std::isfinite (s) ? s : 0.0f;
         }
-        window.multiplyWithWindowingTable (fftData.data(), (size_t) fftSize);
+        window.multiplyWithWindowingTable (fftData.data(), (size_t) usable);
 
         juce::dsp::FFT fft (order);
         fft.performFrequencyOnlyForwardTransform (fftData.data());
 
         const int numBins = fftSize / 2 + 1;
+
+        // A Hann window is zero at its first sample, so a signal whose only
+        // energy sits at index 0 is annihilated by the window. Without this
+        // guard maxDb would stay at the floor and every bin would normalize to
+        // 0 dB — a bogus flat full-scale spectrum. No energy -> empty result,
+        // matching the silent-input contract above.
+        float peakMag = 0.0f;
+        for (int b = 0; b < numBins; ++b)
+            peakMag = juce::jmax (peakMag, fftData[(size_t) b]);
+        if (! (peakMag > 0.0f)) return result;
+
         result.magsDb.resize ((size_t) numBins);
         result.fftSize = fftSize;
         result.binHz   = sampleRate / (double) fftSize;

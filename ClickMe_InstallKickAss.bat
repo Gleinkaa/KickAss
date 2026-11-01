@@ -32,7 +32,7 @@ echo   Dest   : %DEST%
 echo.
 
 :: Try the copy
-xcopy /E /I /Y "%SRC%" "%DEST%" >/dev/null 2>&1
+xcopy /E /I /Y "%SRC%" "%DEST%" >nul 2>&1
 if errorlevel 1 (
     echo   [WARN] Copy failed — probably need admin rights.
     echo          Right-click this script ^> "Run as administrator"
@@ -48,5 +48,5 @@ echo.
 echo   [OK] Restart your DAW and find it under Gleinkaa ^> KickAss.
 echo.
 echo   Press any key to finish...
-pause >/dev/null
+pause >nul
 endlocal
